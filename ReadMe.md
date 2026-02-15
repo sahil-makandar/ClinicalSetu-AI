@@ -86,3 +86,8 @@ This repository contains:
 - Multilingual support
 - Advanced analytics dashboard
 - ABDM-aligned interoperability
+
+
+## About
+
+This project was conceptualized and developed as part of the AI for Bharat Hackathon (Professional Track – Healthcare & Life Sciences).
