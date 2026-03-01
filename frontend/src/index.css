@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme {
+  --color-medical-50: #f0fdfa;
+  --color-medical-100: #ccfbf1;
+  --color-medical-200: #99f6e4;
+  --color-medical-300: #5eead4;
+  --color-medical-400: #2dd4bf;
+  --color-medical-500: #14b8a6;
+  --color-medical-600: #0d9488;
+  --color-medical-700: #0f766e;
+  --color-medical-800: #115e59;
+  --color-medical-900: #134e4a;
+  --color-medical-950: #042f2e;
+
+  --color-accent-50: #f5f3ff;
+  --color-accent-100: #ede9fe;
+  --color-accent-500: #8b5cf6;
+  --color-accent-600: #7c3aed;
+  --color-accent-700: #6d28d9;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  ::selection {
+    @apply bg-medical-200 text-medical-900;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-medical-600 to-medical-500;
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  .animate-pulse-soft {
+    animation: pulse-soft 2s ease-in-out infinite;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; }
+}

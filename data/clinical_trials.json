@@ -1,0 +1,287 @@
+[
+  {
+    "trial_id": "NCT05432101",
+    "title": "Efficacy of Dapagliflozin in Type 2 Diabetes with Early Nephropathy in Indian Population",
+    "phase": "Phase 3",
+    "sponsor": "Indian Council of Medical Research (ICMR)",
+    "status": "Recruiting",
+    "conditions": ["Type 2 Diabetes Mellitus", "Diabetic Nephropathy"],
+    "inclusion_criteria": {
+      "age_min": 30,
+      "age_max": 70,
+      "gender": "All",
+      "diagnosis": "Type 2 Diabetes Mellitus with HbA1c 7.0-10.0%",
+      "additional": ["Urine microalbumin positive", "eGFR > 45 mL/min", "On stable oral hypoglycemic therapy for at least 3 months"]
+    },
+    "exclusion_criteria": ["Type 1 Diabetes", "eGFR < 45", "History of diabetic ketoacidosis", "Pregnancy or lactation", "Active urinary tract infection"],
+    "locations": ["AIIMS Delhi", "KEM Hospital Mumbai", "CMC Vellore"],
+    "contact": "Dr. Ramesh Verma, trialcoordinator@icmr-diabetes.in",
+    "summary": "A multicenter randomized controlled trial evaluating the renal protective effects of Dapagliflozin 10mg added to standard care in Indian patients with Type 2 DM and early diabetic nephropathy."
+  },
+  {
+    "trial_id": "NCT05567890",
+    "title": "Belimumab Combined with Standard Therapy for Newly Diagnosed SLE in South Asian Patients",
+    "phase": "Phase 3",
+    "sponsor": "GSK India",
+    "status": "Recruiting",
+    "conditions": ["Systemic Lupus Erythematosus"],
+    "inclusion_criteria": {
+      "age_min": 18,
+      "age_max": 55,
+      "gender": "All",
+      "diagnosis": "Newly diagnosed SLE meeting ACR/EULAR 2019 criteria",
+      "additional": ["ANA positive", "Anti-dsDNA positive", "SLEDAI score >= 6"]
+    },
+    "exclusion_criteria": ["Severe lupus nephritis (Class IV/V)", "Active CNS lupus", "Prior biologic therapy", "Active infection including TB", "Pregnancy"],
+    "locations": ["Apollo Hospital Chennai", "NIMHANS Bangalore", "Sir Ganga Ram Hospital Delhi"],
+    "contact": "Dr. Kavita Sharma, sle.trial@gskindia.com",
+    "summary": "Evaluating the efficacy and safety of Belimumab in combination with standard immunosuppressive therapy in newly diagnosed SLE patients of South Asian descent."
+  },
+  {
+    "trial_id": "NCT05678234",
+    "title": "Pembrolizumab Plus Chemotherapy as First-Line Treatment for Advanced Non-Small Cell Lung Cancer",
+    "phase": "Phase 3",
+    "sponsor": "MSD India",
+    "status": "Recruiting",
+    "conditions": ["Non-Small Cell Lung Cancer", "NSCLC"],
+    "inclusion_criteria": {
+      "age_min": 18,
+      "age_max": 75,
+      "gender": "All",
+      "diagnosis": "Histologically confirmed Stage IIIB/IV NSCLC",
+      "additional": ["No prior systemic therapy for advanced disease", "ECOG PS 0-1", "PD-L1 TPS >= 1%", "Adequate organ function"]
+    },
+    "exclusion_criteria": ["EGFR/ALK mutations", "Active autoimmune disease", "Prior immunotherapy", "Active brain metastases", "Interstitial lung disease"],
+    "locations": ["Tata Memorial Hospital Mumbai", "Rajiv Gandhi Cancer Institute Delhi", "Kidwai Memorial Institute Bangalore"],
+    "contact": "Dr. Ashwin Kulkarni, nsclc.trial@msdindia.com",
+    "summary": "A Phase 3 trial comparing Pembrolizumab plus platinum-based chemotherapy versus chemotherapy alone as first-line treatment in Indian patients with advanced NSCLC expressing PD-L1."
+  },
+  {
+    "trial_id": "NCT05789456",
+    "title": "Donepezil-Memantine Combination in Early Alzheimer's Disease in Indian Elderly",
+    "phase": "Phase 3",
+    "sponsor": "Sun Pharma Advanced Research",
+    "status": "Recruiting",
+    "conditions": ["Alzheimer's Disease", "Dementia"],
+    "inclusion_criteria": {
+      "age_min": 60,
+      "age_max": 85,
+      "gender": "All",
+      "diagnosis": "Probable Alzheimer's Disease per NIA-AA criteria",
+      "additional": ["MMSE score 15-24", "MRI showing hippocampal atrophy", "Reliable caregiver available", "Stable medical comorbidities"]
+    },
+    "exclusion_criteria": ["Vascular dementia", "Lewy body dementia", "Severe depression", "History of seizures", "Severe hepatic or renal impairment"],
+    "locations": ["NIMHANS Bangalore", "AIIMS Delhi", "Nair Hospital Mumbai"],
+    "contact": "Dr. Priya Nambiar, alzheimer.trial@sunpharma.com",
+    "summary": "Evaluating early combination therapy with Donepezil and Memantine versus Donepezil monotherapy in Indian elderly patients with early to moderate Alzheimer's disease."
+  },
+  {
+    "trial_id": "NCT05890123",
+    "title": "Yoga and Pranayama as Adjunct Therapy in Moderate Persistent Asthma",
+    "phase": "Phase 2",
+    "sponsor": "Ministry of AYUSH / ICMR",
+    "status": "Recruiting",
+    "conditions": ["Bronchial Asthma", "Moderate Persistent Asthma"],
+    "inclusion_criteria": {
+      "age_min": 12,
+      "age_max": 60,
+      "gender": "All",
+      "diagnosis": "Moderate persistent bronchial asthma per GINA guidelines",
+      "additional": ["On stable ICS-LABA therapy for at least 4 weeks", "FEV1 60-80% predicted", "Able to perform yoga exercises"]
+    },
+    "exclusion_criteria": ["Severe or uncontrolled asthma", "COPD overlap", "Significant cardiac disease", "Physical disability preventing yoga", "Current smoker"],
+    "locations": ["AIIMS Rishikesh", "Kaivalyadhama Yoga Institute Pune", "JIPMER Puducherry"],
+    "contact": "Dr. Amit Srivastava, yoga.asthma@ayushresearch.in",
+    "summary": "A randomized controlled trial evaluating structured yoga and pranayama breathing exercises as adjunct therapy in patients with moderate persistent asthma on standard inhaler therapy."
+  },
+  {
+    "trial_id": "NCT05901234",
+    "title": "GLP-1 Receptor Agonist for Cardiovascular Risk Reduction in Indian Diabetic Patients",
+    "phase": "Phase 4",
+    "sponsor": "Novo Nordisk India",
+    "status": "Recruiting",
+    "conditions": ["Type 2 Diabetes Mellitus", "Cardiovascular Disease"],
+    "inclusion_criteria": {
+      "age_min": 40,
+      "age_max": 75,
+      "gender": "All",
+      "diagnosis": "Type 2 DM with established cardiovascular disease or high CV risk",
+      "additional": ["HbA1c 7.0-10.5%", "BMI >= 27", "At least one CV risk factor or established ASCVD", "On metformin therapy"]
+    },
+    "exclusion_criteria": ["Type 1 Diabetes", "eGFR < 30", "History of pancreatitis", "Personal/family history of MTC", "Severe gastroparesis"],
+    "locations": ["Fortis Hospital Delhi", "Manipal Hospital Bangalore", "PGIMER Chandigarh"],
+    "contact": "Dr. Neelam Bhatia, cv.diabetes@novonordisk.in",
+    "summary": "A post-marketing study evaluating cardiovascular outcomes with Semaglutide in Indian patients with Type 2 DM and high cardiovascular risk."
+  },
+  {
+    "trial_id": "NCT05012345",
+    "title": "Hydroxychloroquine Dose Optimization in Indian SLE Patients Based on Blood Levels",
+    "phase": "Phase 2",
+    "sponsor": "ICMR",
+    "status": "Recruiting",
+    "conditions": ["Systemic Lupus Erythematosus"],
+    "inclusion_criteria": {
+      "age_min": 18,
+      "age_max": 60,
+      "gender": "All",
+      "diagnosis": "SLE meeting ACR/EULAR criteria",
+      "additional": ["Currently on Hydroxychloroquine", "No retinal toxicity on screening", "SLEDAI <= 10"]
+    },
+    "exclusion_criteria": ["Hydroxychloroquine retinopathy", "G6PD deficiency", "Severe renal impairment", "Pregnancy", "QTc prolongation"],
+    "locations": ["CMC Vellore", "KEM Hospital Mumbai", "AIIMS Delhi"],
+    "contact": "Dr. Sunita Rao, hcq.sle@icmr.gov.in",
+    "summary": "A study to determine optimal Hydroxychloroquine dosing in Indian SLE patients using therapeutic drug monitoring to maximize efficacy while minimizing retinal toxicity risk."
+  },
+  {
+    "trial_id": "NCT05123456",
+    "title": "Tiotropium-Olodaterol Fixed Combination in Indian COPD Patients",
+    "phase": "Phase 3",
+    "sponsor": "Boehringer Ingelheim India",
+    "status": "Recruiting",
+    "conditions": ["Chronic Obstructive Pulmonary Disease", "COPD"],
+    "inclusion_criteria": {
+      "age_min": 40,
+      "age_max": 80,
+      "gender": "All",
+      "diagnosis": "COPD GOLD Stage 2-4",
+      "additional": ["Post-bronchodilator FEV1 < 70% predicted", "FEV1/FVC < 0.7", "Smoking history >= 10 pack-years or biomass fuel exposure", "At least one exacerbation in the past year"]
+    },
+    "exclusion_criteria": ["Asthma diagnosis", "Active pulmonary tuberculosis", "Lung cancer", "Unstable cardiac disease", "Recent respiratory infection within 4 weeks"],
+    "locations": ["PGIMER Chandigarh", "AIIMS Bhopal", "Government General Hospital Chennai"],
+    "contact": "Dr. Vikrant Sharma, copd.trial@boehringer.in",
+    "summary": "Evaluating the efficacy and safety of Tiotropium-Olodaterol fixed-dose combination versus Tiotropium monotherapy in Indian patients with moderate to severe COPD."
+  },
+  {
+    "trial_id": "NCT05234567",
+    "title": "Maternal Metformin Versus Insulin for Gestational Diabetes in Indian Women",
+    "phase": "Phase 3",
+    "sponsor": "FOGSI Research Foundation",
+    "status": "Recruiting",
+    "conditions": ["Gestational Diabetes Mellitus"],
+    "inclusion_criteria": {
+      "age_min": 18,
+      "age_max": 42,
+      "gender": "Female",
+      "diagnosis": "GDM diagnosed by IADPSG criteria between 24-32 weeks gestation",
+      "additional": ["Singleton pregnancy", "Failed dietary management for 2 weeks", "Fasting glucose < 126 mg/dL"]
+    },
+    "exclusion_criteria": ["Pre-existing diabetes", "Multiple pregnancy", "Renal impairment", "Metformin allergy", "Fetal anomaly"],
+    "locations": ["Safdarjung Hospital Delhi", "KEM Hospital Mumbai", "JIPMER Puducherry"],
+    "contact": "Dr. Meenakshi Ahuja, gdm.trial@fogsi.org",
+    "summary": "A non-inferiority trial comparing Metformin with Insulin for glycemic control and neonatal outcomes in Indian women with gestational diabetes who fail dietary management."
+  },
+  {
+    "trial_id": "NCT05345678",
+    "title": "Propranolol vs Topiramate for Migraine Prophylaxis in Indian Adults",
+    "phase": "Phase 3",
+    "sponsor": "ICMR Headache Research Group",
+    "status": "Recruiting",
+    "conditions": ["Migraine", "Chronic Migraine"],
+    "inclusion_criteria": {
+      "age_min": 18,
+      "age_max": 65,
+      "gender": "All",
+      "diagnosis": "Episodic or chronic migraine per ICHD-3 criteria",
+      "additional": ["At least 4 migraine days per month", "Failed or intolerant to at least one acute treatment", "No medication overuse"]
+    },
+    "exclusion_criteria": ["Asthma or severe COPD", "Heart block", "Uncontrolled depression", "Pregnancy or planning pregnancy", "Renal stones"],
+    "locations": ["NIMHANS Bangalore", "AIIMS Delhi", "Amrita Hospital Kochi"],
+    "contact": "Dr. Raghav Menon, migraine.trial@icmr.gov.in",
+    "summary": "A head-to-head comparison of Propranolol and Topiramate for migraine prevention in Indian patients, assessing efficacy, tolerability, and quality of life outcomes."
+  },
+  {
+    "trial_id": "NCT05456789",
+    "title": "Rheumatoid Arthritis Early Intervention with Methotrexate-Tofacitinib in Indian Patients",
+    "phase": "Phase 3",
+    "sponsor": "Cipla Research Foundation",
+    "status": "Recruiting",
+    "conditions": ["Rheumatoid Arthritis"],
+    "inclusion_criteria": {
+      "age_min": 18,
+      "age_max": 65,
+      "gender": "All",
+      "diagnosis": "Rheumatoid Arthritis per ACR/EULAR 2010 criteria",
+      "additional": ["Disease duration < 2 years", "DAS28-CRP >= 3.2", "Anti-CCP positive", "DMARD-naive or on MTX alone"]
+    },
+    "exclusion_criteria": ["Prior biologic or JAK inhibitor use", "Active TB or latent TB without prophylaxis", "Hepatitis B or C", "Lymphopenia", "VTE history"],
+    "locations": ["AIIMS Delhi", "Breach Candy Hospital Mumbai", "Apollo Hospital Chennai"],
+    "contact": "Dr. Anjali Desai, ra.trial@ciplaresearch.com",
+    "summary": "Evaluating early combination therapy with Methotrexate plus Tofacitinib versus Methotrexate plus placebo in Indian patients with early, active Rheumatoid Arthritis."
+  },
+  {
+    "trial_id": "NCT05567891",
+    "title": "AI-Guided Insulin Titration App for Type 2 Diabetes in Rural India",
+    "phase": "Phase 2",
+    "sponsor": "IIT Bombay Healthcare AI Lab / Eli Lilly India",
+    "status": "Recruiting",
+    "conditions": ["Type 2 Diabetes Mellitus"],
+    "inclusion_criteria": {
+      "age_min": 30,
+      "age_max": 75,
+      "gender": "All",
+      "diagnosis": "Type 2 DM on basal insulin for at least 3 months",
+      "additional": ["HbA1c 8.0-12.0%", "Smartphone access", "Willing to use glucose monitoring device", "Residing in rural or semi-urban area"]
+    },
+    "exclusion_criteria": ["Type 1 Diabetes", "On insulin pump", "Severe hypoglycemia in past 6 months", "Cognitive impairment", "No smartphone access"],
+    "locations": ["PHC Network Maharashtra", "CHC Network Karnataka", "District Hospital Rajasthan"],
+    "contact": "Dr. Arjun Prasad, ai.insulin@iitb.ac.in",
+    "summary": "Testing an AI-powered mobile application for automated basal insulin dose titration in Type 2 DM patients in rural Indian healthcare settings."
+  },
+  {
+    "trial_id": "NCT05678901",
+    "title": "Aducanumab Safety and Efficacy in Indian Patients with Early Alzheimer's Disease",
+    "phase": "Phase 3",
+    "sponsor": "Biogen India",
+    "status": "Recruiting",
+    "conditions": ["Alzheimer's Disease", "Mild Cognitive Impairment"],
+    "inclusion_criteria": {
+      "age_min": 50,
+      "age_max": 85,
+      "gender": "All",
+      "diagnosis": "MCI due to AD or mild AD dementia",
+      "additional": ["MMSE 22-30", "Amyloid PET positive or CSF biomarker positive", "Reliable caregiver", "Stable medications for 4 weeks"]
+    },
+    "exclusion_criteria": ["Non-AD dementia", "Significant cerebrovascular disease on MRI", "Anticoagulant therapy", "History of seizures", "Severe psychiatric disorder"],
+    "locations": ["NIMHANS Bangalore", "AIIMS Delhi", "Manipal Hospital Bangalore"],
+    "contact": "Dr. Sunil Kumar, alzheimer.india@biogen.com",
+    "summary": "Evaluating the safety, tolerability, and efficacy of Aducanumab in Indian patients with early-stage Alzheimer's disease confirmed by amyloid biomarkers."
+  },
+  {
+    "trial_id": "NCT05789012",
+    "title": "Sacubitril-Valsartan in Heart Failure with Preserved Ejection Fraction in Indian Patients",
+    "phase": "Phase 3",
+    "sponsor": "Novartis India",
+    "status": "Recruiting",
+    "conditions": ["Heart Failure", "HFpEF"],
+    "inclusion_criteria": {
+      "age_min": 40,
+      "age_max": 80,
+      "gender": "All",
+      "diagnosis": "Heart failure with LVEF >= 45%",
+      "additional": ["NT-proBNP elevated", "NYHA Class II-III", "At least one HF hospitalization in past 12 months or elevated filling pressures", "Stable HF medications for 4 weeks"]
+    },
+    "exclusion_criteria": ["LVEF < 45%", "Severe valvular disease", "SBP < 100 mmHg", "eGFR < 30", "History of angioedema"],
+    "locations": ["Medanta Hospital Delhi", "Narayana Health Bangalore", "AIIMS Delhi"],
+    "contact": "Dr. Rajesh Khanna, hfpef.trial@novartis.in",
+    "summary": "A trial evaluating Sacubitril-Valsartan versus Valsartan in Indian patients with heart failure and preserved ejection fraction."
+  },
+  {
+    "trial_id": "NCT05890234",
+    "title": "Mindfulness-Based Cognitive Therapy for Depression in Indian Cancer Survivors",
+    "phase": "Phase 2",
+    "sponsor": "Tata Trusts / NIMHANS",
+    "status": "Recruiting",
+    "conditions": ["Depression", "Cancer Survivorship"],
+    "inclusion_criteria": {
+      "age_min": 25,
+      "age_max": 70,
+      "gender": "All",
+      "diagnosis": "Cancer survivor (any solid tumor) with moderate depression (PHQ-9 score 10-19)",
+      "additional": ["Completed primary cancer treatment at least 3 months ago", "No active cancer", "Able to attend weekly sessions", "Not on antidepressants or on stable dose for 8 weeks"]
+    },
+    "exclusion_criteria": ["Active cancer requiring treatment", "Severe depression or suicidal ideation", "Psychotic disorder", "Substance use disorder", "Cognitive impairment"],
+    "locations": ["Tata Memorial Hospital Mumbai", "NIMHANS Bangalore", "AIIMS Delhi"],
+    "contact": "Dr. Pallavi Sen, mbct.cancer@tatrusts.org",
+    "summary": "Evaluating the efficacy of an 8-week Mindfulness-Based Cognitive Therapy program for depression and quality of life in Indian cancer survivors."
+  }
+]
