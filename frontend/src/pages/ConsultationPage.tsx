@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Mic, MicOff, Send, Loader2, Stethoscope, Sparkles, User, Zap, FileText, UserCheck, FlaskConical, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Mic, MicOff, Send, Loader2, Stethoscope, Sparkles, User, Zap, FileText, UserCheck, FlaskConical, ChevronRight, Globe, Type, AudioLines } from 'lucide-react';
 import { sampleConsultations } from '../data/sampleConsultations';
 import { processConsultation } from '../services/api';
+import { startTranscription, isTranscribeConfigured, type TranscribeSession } from '../services/transcribeService';
 import type { Consultation, ProcessingResult } from '../types';
 
 interface Props {
@@ -16,8 +17,21 @@ const processingSteps = [
   { label: 'Generating SOAP Note...', icon: Stethoscope },
   { label: 'Creating Patient Summary...', icon: UserCheck },
   { label: 'Drafting Referral Letter...', icon: Send },
+  { label: 'Generating Discharge Summary...', icon: FileText },
   { label: 'Matching Clinical Trials...', icon: FlaskConical },
   { label: 'Validating outputs...', icon: Sparkles },
+];
+
+const supportedLanguages = [
+  { code: 'en-IN', label: 'English', short: 'EN' },
+  { code: 'hi-IN', label: 'Hindi', short: 'HI' },
+  { code: 'ta-IN', label: 'Tamil', short: 'TA' },
+  { code: 'te-IN', label: 'Telugu', short: 'TE' },
+  { code: 'mr-IN', label: 'Marathi', short: 'MR' },
+  { code: 'bn-IN', label: 'Bengali', short: 'BN' },
+  { code: 'kn-IN', label: 'Kannada', short: 'KN' },
+  { code: 'gu-IN', label: 'Gujarati', short: 'GU' },
+  { code: 'ml-IN', label: 'Malayalam', short: 'ML' },
 ];
 
 export default function ConsultationPage({ doctor, consultation, onResult }: Props) {
@@ -32,6 +46,57 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState('');
   const [isListening, setIsListening] = useState(false);
+  const [inputMode, setInputMode] = useState<'voice' | 'text'>('voice');
+  const [detectedLang, setDetectedLang] = useState('Auto-detect');
+  const [audioLevel, setAudioLevel] = useState<number[]>(new Array(32).fill(5));
+  const [interimText, setInterimText] = useState('');
+  const transcribeSessionRef = useRef<TranscribeSession | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animFrameRef = useRef<number>(0);
+  const streamRef = useRef<MediaStream | null>(null);
+  const finalTranscriptRef = useRef<string>('');
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      if (transcribeSessionRef.current) { try { transcribeSessionRef.current.stop(); } catch {} }
+    };
+  }, []);
+
+  // Audio visualizer - uses existing media stream from Transcribe
+  const startAudioVisualizer = useCallback((stream: MediaStream) => {
+    try {
+      streamRef.current = stream;
+      const ctx = new AudioContext();
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 64;
+      src.connect(analyser);
+      analyserRef.current = analyser;
+
+      const updateBars = () => {
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(data);
+        const bars = Array.from(data).slice(0, 32).map(v => Math.max(5, (v / 255) * 100));
+        setAudioLevel(bars);
+        animFrameRef.current = requestAnimationFrame(updateBars);
+      };
+      updateBars();
+    } catch {
+      // If visualizer fails, transcription still works
+    }
+  }, []);
+
+  const stopAudioVisualizer = useCallback(() => {
+    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setAudioLevel(new Array(32).fill(5));
+  }, []);
 
   const handleLoadSample = (sample: Consultation) => {
     setText(sample.consultation_text);
@@ -40,38 +105,112 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
     setPatientGender(sample.patient.gender);
     setReferralReason(sample.referral_reason || '');
     setSpecialistType(sample.specialist_type || '');
+    setInputMode('text');
   };
 
-  const toggleVoiceInput = () => {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      setError('Voice input is not supported in this browser. Please use Chrome.');
-      return;
-    }
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  const toggleVoiceInput = async () => {
     if (isListening) {
+      transcribeSessionRef.current?.stop();
+      transcribeSessionRef.current = null;
       setIsListening(false);
+      stopAudioVisualizer();
       return;
     }
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-IN';
-    recognition.onresult = (event: any) => {
-      let transcript = '';
-      for (let i = 0; i < event.results.length; i++) {
-        transcript += event.results[i][0].transcript;
+
+    // Check if Transcribe Medical is configured; fall back to Web Speech API if not
+    if (!isTranscribeConfigured()) {
+      if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        setError('Voice input not available. Configure Amazon Transcribe Medical or use Chrome.');
+        return;
       }
-      setText(prev => prev + ' ' + transcript);
-    };
-    recognition.onend = () => setIsListening(false);
-    recognition.start();
-    setIsListening(true);
+      // Fallback to Web Speech API for local development
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-IN';
+
+      recognition.onresult = (event: any) => {
+        let final = '';
+        let interim = '';
+        for (let i = 0; i < event.results.length; i++) {
+          const t = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            final += t + ' ';
+          } else {
+            interim = t;
+          }
+        }
+        if (final) setText(prev => (prev + ' ' + final).trim());
+        setInterimText(interim);
+      };
+
+      recognition.onerror = (event: any) => {
+        if (event.error !== 'no-speech') setError(`Voice recognition error: ${event.error}`);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        setInterimText('');
+        stopAudioVisualizer();
+      };
+
+      recognition.start();
+      setIsListening(true);
+      setDetectedLang('English (browser fallback)');
+      // Get mic stream for visualizer
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        startAudioVisualizer(stream);
+      } catch {}
+      // Store stop fn
+      transcribeSessionRef.current = {
+        stop: () => { try { recognition.stop(); } catch {} },
+        stream: new MediaStream(),
+      };
+      return;
+    }
+
+    // Amazon Transcribe Medical streaming
+    try {
+      finalTranscriptRef.current = text; // preserve existing text
+      const session = await startTranscription(
+        (transcript, isFinal) => {
+          if (isFinal) {
+            finalTranscriptRef.current = (finalTranscriptRef.current + ' ' + transcript).trim();
+            setText(finalTranscriptRef.current);
+            setInterimText('');
+          } else {
+            setInterimText(transcript);
+          }
+        },
+        (errorMsg) => {
+          setError(`Transcription error: ${errorMsg}`);
+          setIsListening(false);
+          stopAudioVisualizer();
+        },
+      );
+
+      transcribeSessionRef.current = session;
+      setIsListening(true);
+      setDetectedLang('English (Medical)');
+      startAudioVisualizer(session.stream);
+    } catch (err: any) {
+      setError(err.message || 'Failed to start Amazon Transcribe Medical');
+    }
   };
 
   const handleProcess = async () => {
     if (!text.trim() || !patientName.trim() || !patientAge.trim()) {
       setError('Please fill in the consultation text and patient details.');
       return;
+    }
+
+    if (isListening) {
+      transcribeSessionRef.current?.stop();
+      transcribeSessionRef.current = null;
+      setIsListening(false);
+      stopAudioVisualizer();
     }
 
     setIsProcessing(true);
@@ -136,6 +275,27 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
               <p className="text-xs text-slate-500">{doctor.name} &middot; {doctor.speciality}</p>
             </div>
           </div>
+          {/* Mode Toggle */}
+          <div className="ml-auto flex items-center bg-slate-100 rounded-xl p-1">
+            <button
+              onClick={() => setInputMode('voice')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                inputMode === 'voice' ? 'bg-white text-medical-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <Mic className="w-3.5 h-3.5" />
+              Voice
+            </button>
+            <button
+              onClick={() => setInputMode('text')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                inputMode === 'text' ? 'bg-white text-medical-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <Type className="w-3.5 h-3.5" />
+              Text
+            </button>
+          </div>
         </div>
       </header>
 
@@ -150,7 +310,7 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
                 <Sparkles className="w-8 h-8 text-medical-600 relative z-10 animate-pulse-soft" />
               </div>
               <h2 className="text-xl font-bold text-slate-900">AI Processing</h2>
-              <p className="text-sm text-slate-500 mt-1">Generating 4 clinical outputs from your narrative</p>
+              <p className="text-sm text-slate-500 mt-1">Generating 5 clinical outputs from your narrative</p>
             </div>
 
             <div className="space-y-2.5">
@@ -185,7 +345,7 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
 
             <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-400">
               <Zap className="w-3.5 h-3.5 text-medical-400" />
-              <span>Powered by Amazon Bedrock Agent (Claude 3 Sonnet)</span>
+              <span>Powered by Amazon Bedrock (Nova Lite + Claude Haiku fallback)</span>
             </div>
           </div>
         </div>
@@ -216,41 +376,155 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
               </div>
             </div>
 
-            {/* Text Input */}
-            <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-5">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-slate-400" />
-                  <label className="text-sm font-semibold text-slate-700">Clinical Narrative</label>
+            {/* Voice Input Mode */}
+            {inputMode === 'voice' && (
+              <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden">
+                {/* Voice Hero Area */}
+                <div className="relative flex flex-col items-center justify-center py-10 px-6" style={{ background: 'linear-gradient(180deg, #f0fdfa 0%, #ffffff 100%)' }}>
+                  {/* Language Detection Badge */}
+                  <div className="flex items-center gap-2 mb-6">
+                    <Globe className="w-3.5 h-3.5 text-medical-500" />
+                    <span className="text-xs font-semibold text-medical-700 bg-medical-50 border border-medical-200/50 px-3 py-1 rounded-full">
+                      {isListening ? `Detecting: ${detectedLang}` : 'Multi-language Auto-detect'}
+                    </span>
+                  </div>
+
+                  {/* Waveform Visualizer */}
+                  <div className="flex items-center justify-center gap-[3px] h-20 mb-6 w-full max-w-sm">
+                    {audioLevel.map((level, i) => (
+                      <div
+                        key={i}
+                        className={`w-[6px] rounded-full transition-all ${
+                          isListening
+                            ? 'bg-gradient-to-t from-medical-500 to-medical-300'
+                            : 'bg-slate-200'
+                        }`}
+                        style={{
+                          height: `${isListening ? level : 5}%`,
+                          transitionDuration: isListening ? '80ms' : '300ms',
+                          opacity: isListening ? 0.7 + (level / 300) : 0.4,
+                        }}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Big Mic Button */}
+                  <button
+                    onClick={toggleVoiceInput}
+                    className={`relative w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer ${
+                      isListening
+                        ? 'bg-rose-500 shadow-xl shadow-rose-500/30 scale-110'
+                        : 'bg-gradient-to-br from-medical-600 to-medical-500 shadow-xl shadow-medical-600/30 hover:scale-105 hover:shadow-2xl hover:shadow-medical-600/40'
+                    }`}
+                  >
+                    {/* Pulse rings when listening */}
+                    {isListening && (
+                      <>
+                        <span className="absolute inset-0 rounded-full bg-rose-400 animate-ping opacity-20" />
+                        <span className="absolute -inset-3 rounded-full border-2 border-rose-300 opacity-30 animate-pulse" />
+                        <span className="absolute -inset-6 rounded-full border border-rose-200 opacity-20 animate-pulse" style={{ animationDelay: '0.5s' }} />
+                      </>
+                    )}
+                    {isListening ? (
+                      <MicOff className="w-10 h-10 text-white relative z-10" />
+                    ) : (
+                      <Mic className="w-10 h-10 text-white relative z-10" />
+                    )}
+                  </button>
+
+                  <p className={`mt-5 text-sm font-medium ${isListening ? 'text-rose-600' : 'text-slate-500'}`}>
+                    {isListening ? 'Tap to stop recording' : 'Tap to start recording'}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    {isListening ? (
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                        Recording &middot; Amazon Transcribe Medical
+                      </span>
+                    ) : 'Powered by Amazon Transcribe Medical &middot; Clinical vocabulary optimized'}
+                  </p>
+
+                  {/* Supported Languages Grid */}
+                  {!isListening && (
+                    <div className="flex flex-wrap justify-center gap-1.5 mt-4">
+                      {supportedLanguages.map(lang => (
+                        <span key={lang.code} className="text-[10px] font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">
+                          {lang.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <button
-                  onClick={toggleVoiceInput}
-                  className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-xl font-medium transition-all cursor-pointer ${
-                    isListening
-                      ? 'bg-rose-50 text-rose-600 border border-rose-200 animate-pulse-soft'
-                      : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-medical-50 hover:text-medical-600 hover:border-medical-200'
-                  }`}
-                >
-                  {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                  {isListening ? 'Stop Recording' : 'Voice Input'}
-                </button>
+
+                {/* Live Transcript Area */}
+                <div className="border-t border-slate-200/60 p-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AudioLines className="w-4 h-4 text-slate-400" />
+                    <span className="text-xs font-semibold text-slate-600">Live Transcript</span>
+                    {text && <span className="text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md ml-auto">{text.split(/\s+/).filter(Boolean).length} words</span>}
+                  </div>
+                  <div className="min-h-[120px] max-h-[200px] overflow-y-auto p-3 bg-slate-50/50 border border-slate-200 rounded-xl">
+                    {text || interimText ? (
+                      <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                        {text}
+                        {interimText && <span className="text-slate-400 italic"> {interimText}</span>}
+                      </p>
+                    ) : (
+                      <p className="text-sm text-slate-400 italic">
+                        Your transcription will appear here in real-time...
+                      </p>
+                    )}
+                  </div>
+                  {text && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <button
+                        onClick={() => { setText(''); setInterimText(''); }}
+                        className="text-xs text-slate-500 hover:text-rose-500 cursor-pointer px-2 py-1 rounded-lg hover:bg-rose-50 transition-all"
+                      >
+                        Clear
+                      </button>
+                      <button
+                        onClick={() => setInputMode('text')}
+                        className="text-xs text-slate-500 hover:text-medical-600 cursor-pointer px-2 py-1 rounded-lg hover:bg-medical-50 transition-all"
+                      >
+                        Edit as text
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <textarea
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Enter the clinical consultation narrative here...&#10;&#10;Describe the patient's presentation, examination findings, assessment, and plan as you would during a consultation."
-                className="w-full h-72 p-4 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-medical-500/20 focus:border-medical-500 focus:bg-white resize-none transition-all duration-200 leading-relaxed"
-              />
-              <div className="flex items-center justify-between mt-2.5">
-                <span className="text-xs text-slate-400 font-medium">{text.length} characters</span>
-                {isListening && (
-                  <span className="text-xs text-rose-500 flex items-center gap-1.5 font-medium">
-                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                    Listening (en-IN)...
+            )}
+
+            {/* Text Input Mode */}
+            {inputMode === 'text' && (
+              <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-slate-400" />
+                    <label className="text-sm font-semibold text-slate-700">Clinical Narrative</label>
+                  </div>
+                  <button
+                    onClick={() => setInputMode('voice')}
+                    className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-xl font-medium transition-all cursor-pointer bg-slate-50 text-slate-600 border border-slate-200 hover:bg-medical-50 hover:text-medical-600 hover:border-medical-200"
+                  >
+                    <Mic className="w-3.5 h-3.5" />
+                    Switch to Voice
+                  </button>
+                </div>
+                <textarea
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Enter the clinical consultation narrative here...&#10;&#10;Describe the patient's presentation, examination findings, assessment, and plan as you would during a consultation."
+                  className="w-full h-72 p-4 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-medical-500/20 focus:border-medical-500 focus:bg-white resize-none transition-all duration-200 leading-relaxed"
+                />
+                <div className="flex items-center justify-between mt-2.5">
+                  <span className="text-xs text-slate-400 font-medium">{text.length} characters</span>
+                  <span className="text-xs text-slate-400 flex items-center gap-1">
+                    <Globe className="w-3 h-3" /> Multi-language supported
                   </span>
-                )}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Referral Section */}
             <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-5">
@@ -347,9 +621,9 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
               <h3 className="text-sm font-bold text-medical-900 mb-4">How it works</h3>
               <div className="space-y-3">
                 {[
-                  { step: '1', text: 'Enter your clinical narrative' },
-                  { step: '2', text: 'AI Agent generates 4 structured outputs' },
-                  { step: '3', text: 'Review and edit each section' },
+                  { step: '1', text: 'Record or type your clinical narrative' },
+                  { step: '2', text: 'AI auto-detects language & generates 5 outputs' },
+                  { step: '3', text: 'Review, translate & edit each section' },
                   { step: '4', text: 'Approve and finalize documentation' },
                 ].map((item) => (
                   <div key={item.step} className="flex items-start gap-3">
@@ -370,10 +644,13 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
               </h3>
               <div className="space-y-2.5">
                 {[
-                  { label: 'Architecture', value: 'Bedrock Agent + Tool Use' },
-                  { label: 'Model', value: 'Claude 3 Sonnet' },
-                  { label: 'Trial Search', value: 'RAG via Knowledge Bases' },
-                  { label: 'Outputs', value: 'SOAP, Summary, Referral, Trials' },
+                  { label: 'Architecture', value: 'Bedrock Converse API + Retry/Fallback' },
+                  { label: 'Model', value: 'Amazon Nova Lite (primary)' },
+                  { label: 'Fallback', value: 'Claude 3 Haiku (auto-failover)' },
+                  { label: 'Voice', value: 'Amazon Transcribe Medical (streaming)' },
+                  { label: 'Languages', value: '9 Indian languages supported' },
+                  { label: 'Caching', value: 'DynamoDB response cache (24h TTL)' },
+                  { label: 'Outputs', value: 'SOAP, Summary, Referral, Discharge, Trials' },
                   { label: 'Data', value: 'Synthetic only (no real PHI)' },
                 ].map((item) => (
                   <div key={item.label} className="flex items-start gap-2">

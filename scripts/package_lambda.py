@@ -20,6 +20,7 @@ files_to_include = [
     ("backend/prompts/patient_summary.txt", "prompts/patient_summary.txt"),
     ("backend/prompts/referral_letter.txt", "prompts/referral_letter.txt"),
     ("backend/prompts/trial_matching.txt", "prompts/trial_matching.txt"),
+    ("backend/prompts/discharge_summary.txt", "prompts/discharge_summary.txt"),
     # Clinical trials data (bundled for in-context matching)
     ("data/clinical_trials.json", "clinical_trials.json"),
 ]

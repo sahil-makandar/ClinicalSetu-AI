@@ -28,14 +28,14 @@ class CORSHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        if self.path == "/api/process":
+        if self.path in ("/api/process", "/api/translate"):
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode("utf-8")
 
             print(f"\n{'='*60}")
-            print(f"Processing consultation...")
+            print(f"Handling {self.path}...")
 
-            event = {"body": body}
+            event = {"body": body, "path": self.path}
             result = lambda_handler(event, None)
 
             self.send_response(result["statusCode"])

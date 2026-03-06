@@ -127,6 +127,55 @@ export interface ReferralLetter {
   flags?: string[];
 }
 
+export interface DischargeSummary {
+  discharge_summary: {
+    header: {
+      facility: string;
+      patient_name: string;
+      age_gender: string;
+      date_of_visit: string;
+      attending_physician: string;
+      visit_type: string;
+    };
+    chief_complaint: string;
+    history_of_present_illness: string;
+    past_medical_history: string;
+    examination_findings: string;
+    investigations: {
+      completed: string[];
+      ordered: string[];
+    };
+    diagnosis: {
+      primary: string;
+      secondary: string[];
+    };
+    treatment_given: {
+      medications: Array<{
+        name: string;
+        dosage: string;
+        duration: string;
+        instructions: string;
+      }>;
+      procedures: string[];
+      advice: string[];
+    };
+    condition_at_discharge: string;
+    follow_up_plan: {
+      next_visit: string;
+      investigations_before_visit: string[];
+      referrals: string[];
+      emergency_instructions: string;
+    };
+    doctor_signature: {
+      name: string;
+      designation: string;
+      date: string;
+    };
+  };
+  confidence_score: number;
+  disclaimer: string;
+}
+
 export interface TrialMatch {
   trial_id: string;
   trial_title: string;
@@ -169,6 +218,7 @@ export interface ProcessingResult {
   soap_note: SOAPNote;
   patient_summary: PatientSummary;
   referral_letter: ReferralLetter;
+  discharge_summary?: DischargeSummary;
   trial_matches: TrialMatches;
   processing_steps: ProcessingStep[];
   agent_summary?: string;

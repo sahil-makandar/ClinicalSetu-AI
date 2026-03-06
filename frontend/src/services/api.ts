@@ -20,4 +20,12 @@ export async function processConsultation(consultation: Consultation): Promise<P
   return data;
 }
 
+export async function translateSummary(summary: Record<string, unknown>, targetLanguage: string): Promise<Record<string, unknown>> {
+  const response = await api.post('/api/translate', { summary, target_language: targetLanguage });
+  const data = typeof response.data.body === 'string'
+    ? JSON.parse(response.data.body)
+    : response.data;
+  return data.translated_summary || data;
+}
+
 export default api;

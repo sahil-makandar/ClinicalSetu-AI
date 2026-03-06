@@ -1,7 +1,7 @@
 # ClinicalSetu - Prototype Build Checklist
 
 **Hackathon:** AI for Bharat (Professional Track - Healthcare & Life Sciences)
-**Deadline:** March 4, 2026 | 11:59 PM IST
+**Deadline:** March 8, 2026 | 11:59 PM IST (Extended)
 **Budget:** $100 AWS credits
 
 ---

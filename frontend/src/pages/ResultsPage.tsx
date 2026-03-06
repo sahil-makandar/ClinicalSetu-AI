@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, FileText, UserCheck, Send, FlaskConical,
   CheckCircle2, AlertTriangle, Shield, Clock, Sparkles,
-  Printer, ChevronDown, ChevronUp, Check, Stethoscope, Zap, TrendingUp
+  Printer, ChevronDown, ChevronUp, Check, Stethoscope, Zap, TrendingUp,
+  ClipboardList, Edit3, Languages, Loader2
 } from 'lucide-react';
-import type { ProcessingResult, Consultation } from '../types';
+import type { ProcessingResult, Consultation, PatientSummary } from '../types';
+import { translateSummary } from '../services/api';
 
 interface Props {
   result: ProcessingResult;
@@ -13,7 +15,7 @@ interface Props {
   doctor: { id: string; name: string; speciality: string; hospital: string };
 }
 
-type TabId = 'soap' | 'summary' | 'referral' | 'trials';
+type TabId = 'soap' | 'summary' | 'referral' | 'discharge' | 'trials';
 
 function ConfidenceBadge({ score }: { score: number }) {
   const config = score >= 80
@@ -65,16 +67,127 @@ function SectionApproval({ section, onApprove }: { section: string; onApprove: (
   );
 }
 
+function EditableField({ label, value, highlight }: { label: string; value?: string; highlight?: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(value || '');
+
+  if (!value && !editValue) return null;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{label}</p>
+        <button
+          onClick={() => setEditing(!editing)}
+          className="text-xs text-slate-400 hover:text-medical-600 cursor-pointer flex items-center gap-1 transition-colors"
+        >
+          <Edit3 className="w-3 h-3" />
+          {editing ? 'Done' : 'Edit'}
+        </button>
+      </div>
+      {editing ? (
+        <textarea
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          className="w-full p-3 bg-medical-50/30 border border-medical-200/50 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-medical-500/20 focus:border-medical-500 resize-none leading-relaxed min-h-20"
+        />
+      ) : highlight ? (
+        <p className="text-sm font-medium text-medical-800 bg-medical-50/50 p-3 rounded-xl border border-medical-200/30 leading-relaxed">{editValue || value}</p>
+      ) : (
+        <p className="text-sm text-slate-700 leading-relaxed">{editValue || value}</p>
+      )}
+    </div>
+  );
+}
+
+const languages = [
+  { code: 'en', label: 'English', native: 'English' },
+  { code: 'hi', label: 'Hindi', native: 'हिन्दी' },
+  { code: 'ta', label: 'Tamil', native: 'தமிழ்' },
+  { code: 'te', label: 'Telugu', native: 'తెలుగు' },
+  { code: 'mr', label: 'Marathi', native: 'मराठी' },
+  { code: 'bn', label: 'Bengali', native: 'বাংলা' },
+  { code: 'kn', label: 'Kannada', native: 'ಕನ್ನಡ' },
+  { code: 'gu', label: 'Gujarati', native: 'ગુজરাতી' },
+  { code: 'ml', label: 'Malayalam', native: 'മലയാളം' },
+];
+
+function TranslateBar({ data, onTranslated }: {
+  data: Record<string, unknown>;
+  onTranslated: (translated: Record<string, unknown> | null, lang: string) => void;
+}) {
+  const [lang, setLang] = useState('en');
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const handleLangSelect = async (code: string) => {
+    if (code === 'en') {
+      setLang('en');
+      setDone(false);
+      onTranslated(null, 'en');
+      return;
+    }
+    setLang(code);
+    setLoading(true);
+    setDone(false);
+    try {
+      const langName = languages.find(l => l.code === code)?.label || code;
+      const translated = await translateSummary(data, langName);
+      onTranslated(translated, code);
+      setDone(true);
+    } catch {
+      onTranslated(null, 'en');
+      setLang('en');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-4">
+      <div className="flex items-center gap-3 mb-3">
+        <Languages className="w-4 h-4 text-medical-500" />
+        <p className="text-sm font-semibold text-slate-700">Translate Output</p>
+        {loading && <Loader2 className="w-4 h-4 text-medical-500 animate-spin" />}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {languages.map((l) => (
+          <button
+            key={l.code}
+            onClick={() => handleLangSelect(l.code)}
+            disabled={loading}
+            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer border ${
+              lang === l.code
+                ? 'bg-medical-600 text-white border-medical-600 shadow-sm'
+                : 'bg-white text-slate-600 border-slate-200 hover:border-medical-300 hover:text-medical-700'
+            } disabled:opacity-50`}
+          >
+            {l.native}
+          </button>
+        ))}
+      </div>
+      {lang !== 'en' && !loading && done && (
+        <p className="text-xs text-medical-600 mt-2 flex items-center gap-1">
+          <Check className="w-3 h-3" />
+          Translated to {languages.find(l => l.code === lang)?.label} via Amazon Bedrock
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function ResultsPage({ result, consultation, doctor }: Props) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabId>('soap');
   const [approvedSections, setApprovedSections] = useState<Set<string>>(new Set());
   const [finalized, setFinalized] = useState(false);
+  // Per-tab translation state
+  const [translatedData, setTranslatedData] = useState<Record<string, { data: Record<string, unknown> | null; lang: string }>>({});
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode; available: boolean }[] = [
     { id: 'soap', label: 'SOAP Note', icon: <FileText className="w-4 h-4" />, available: true },
     { id: 'summary', label: 'Patient Summary', icon: <UserCheck className="w-4 h-4" />, available: true },
     { id: 'referral', label: 'Referral Letter', icon: <Send className="w-4 h-4" />, available: !!result.referral_letter?.referral_letter },
+    { id: 'discharge', label: 'Discharge Summary', icon: <ClipboardList className="w-4 h-4" />, available: !!result.discharge_summary },
     { id: 'trials', label: 'Trial Matches', icon: <FlaskConical className="w-4 h-4" />, available: true },
   ];
 
@@ -83,7 +196,7 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
   };
 
   const allApproved = tabs.filter(t => t.available).every(t => approvedSections.has(t.id));
-  const { soap_note: soap, patient_summary: summary, referral_letter: referral, trial_matches: trials } = result;
+  const { soap_note: soap, patient_summary: summary, referral_letter: referral, discharge_summary: discharge, trial_matches: trials } = result;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -166,7 +279,10 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* SOAP Note Tab */}
-        {activeTab === 'soap' && soap && (
+        {activeTab === 'soap' && soap && (() => {
+          const tState = translatedData['soap'];
+          const displaySoap = (tState?.data && tState.lang !== 'en' ? tState.data : soap) as typeof soap;
+          return (
           <div className="space-y-5">
             <DisclaimerBanner />
             <div className="flex items-center justify-between">
@@ -176,15 +292,21 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-slate-900 tracking-tight">SOAP Note</h2>
-                  <p className="text-xs text-slate-500">Structured clinical documentation</p>
+                  <p className="text-xs text-slate-500">Structured clinical documentation &middot; Click "Edit" on any field to modify</p>
                 </div>
               </div>
               <SectionApproval section="soap" onApprove={() => handleApprove('soap')} />
             </div>
 
+            <TranslateBar
+
+              data={result.soap_note as unknown as Record<string, unknown>}
+              onTranslated={(translated, lang) => setTranslatedData(prev => ({ ...prev, soap: { data: translated, lang } }))}
+            />
+
             {/* Confidence Overview */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {Object.entries(soap.confidence_scores || {}).map(([key, score]) => (
+              {Object.entries(displaySoap.confidence_scores || {}).map(([key, score]) => (
                 <div key={key} className="bg-white rounded-xl border border-slate-200/60 p-4">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-xs text-slate-500 capitalize font-medium">{key}</p>
@@ -197,24 +319,24 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
 
             {/* Subjective */}
             <SOAPSection title="Subjective" subtitle="Patient-reported information" defaultOpen>
-              <Field label="Chief Complaint" value={soap.subjective?.chief_complaint} highlight />
-              <Field label="History of Present Illness" value={soap.subjective?.history_of_present_illness} />
-              {soap.subjective?.review_of_systems && (
+              <EditableField label="Chief Complaint" value={displaySoap.subjective?.chief_complaint} highlight />
+              <EditableField label="History of Present Illness" value={displaySoap.subjective?.history_of_present_illness} />
+              {displaySoap.subjective?.review_of_systems && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <ListField label="Relevant Positives" items={soap.subjective.review_of_systems.relevant_positives} variant="positive" />
-                  <ListField label="Relevant Negatives" items={soap.subjective.review_of_systems.relevant_negatives} variant="negative" />
+                  <ListField label="Relevant Positives" items={displaySoap.subjective.review_of_systems.relevant_positives} variant="positive" />
+                  <ListField label="Relevant Negatives" items={displaySoap.subjective.review_of_systems.relevant_negatives} variant="negative" />
                 </div>
               )}
-              <ListField label="Past Medical History" items={soap.subjective?.past_medical_history} />
-              <ListField label="Current Medications" items={soap.subjective?.medications} />
-              <ListField label="Allergies" items={soap.subjective?.allergies} variant="warning" />
+              <ListField label="Past Medical History" items={displaySoap.subjective?.past_medical_history} />
+              <ListField label="Current Medications" items={displaySoap.subjective?.medications} />
+              <ListField label="Allergies" items={displaySoap.subjective?.allergies} variant="warning" />
             </SOAPSection>
 
             {/* Objective */}
             <SOAPSection title="Objective" subtitle="Clinical findings & examination">
-              {soap.objective?.vitals && (
+              {displaySoap.objective?.vitals && (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {Object.entries(soap.objective.vitals).filter(([, v]) => v && v !== 'if mentioned' && v !== 'not mentioned').map(([key, value]) => (
+                  {Object.entries(displaySoap.objective.vitals).filter(([, v]) => v && v !== 'if mentioned' && v !== 'not mentioned').map(([key, value]) => (
                     <div key={key} className="bg-medical-50/50 rounded-xl p-3 border border-medical-200/30">
                       <p className="text-[10px] text-medical-600 uppercase font-semibold tracking-wider">{key.replace(/_/g, ' ')}</p>
                       <p className="text-sm font-bold text-medical-900 mt-0.5">{value}</p>
@@ -222,27 +344,27 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                   ))}
                 </div>
               )}
-              <Field label="General" value={soap.objective?.physical_exam?.general} />
-              {soap.objective?.physical_exam?.systems_examined?.map((sys, i) => (
-                <Field key={i} label={sys.system} value={sys.findings} />
+              <EditableField label="General" value={displaySoap.objective?.physical_exam?.general} />
+              {displaySoap.objective?.physical_exam?.systems_examined?.map((sys, i) => (
+                <EditableField key={i} label={sys.system} value={sys.findings} />
               ))}
-              <ListField label="Investigations" items={soap.objective?.investigations} />
+              <ListField label="Investigations" items={displaySoap.objective?.investigations} />
             </SOAPSection>
 
             {/* Assessment */}
             <SOAPSection title="Assessment" subtitle="Clinical reasoning & diagnosis">
-              <Field label="Primary Diagnosis" value={soap.assessment?.primary_diagnosis} highlight />
-              <ListField label="Secondary Diagnoses" items={soap.assessment?.secondary_diagnoses} />
-              <Field label="Clinical Reasoning" value={soap.assessment?.clinical_reasoning} />
+              <EditableField label="Primary Diagnosis" value={displaySoap.assessment?.primary_diagnosis} highlight />
+              <ListField label="Secondary Diagnoses" items={displaySoap.assessment?.secondary_diagnoses} />
+              <EditableField label="Clinical Reasoning" value={displaySoap.assessment?.clinical_reasoning} />
             </SOAPSection>
 
             {/* Plan */}
             <SOAPSection title="Plan" subtitle="Treatment & follow-up">
-              {soap.plan?.medications_prescribed?.length > 0 && (
+              {displaySoap.plan?.medications_prescribed?.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Medications Prescribed</p>
                   <div className="space-y-2">
-                    {soap.plan.medications_prescribed.map((med, i) => (
+                    {displaySoap.plan.medications_prescribed.map((med, i) => (
                       <div key={i} className="bg-medical-50/30 border border-medical-200/30 rounded-xl p-3.5">
                         <p className="text-sm font-semibold text-slate-900">{med.name}</p>
                         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
@@ -255,21 +377,21 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                   </div>
                 </div>
               )}
-              <ListField label="Investigations Ordered" items={soap.plan?.investigations_ordered} />
-              <ListField label="Referrals" items={soap.plan?.referrals} />
-              <Field label="Follow-up" value={soap.plan?.follow_up} />
-              <ListField label="Patient Education" items={soap.plan?.patient_education} />
+              <ListField label="Investigations Ordered" items={displaySoap.plan?.investigations_ordered} />
+              <ListField label="Referrals" items={displaySoap.plan?.referrals} />
+              <EditableField label="Follow-up" value={displaySoap.plan?.follow_up} />
+              <ListField label="Patient Education" items={displaySoap.plan?.patient_education} />
             </SOAPSection>
 
             {/* Flags */}
-            {soap.flags?.length > 0 && (
+            {displaySoap.flags?.length > 0 && (
               <div className="bg-rose-50/80 border border-rose-200/60 rounded-2xl p-5">
                 <h3 className="text-sm font-bold text-rose-700 flex items-center gap-2 mb-3">
                   <AlertTriangle className="w-4 h-4" />
                   Flags for Review
                 </h3>
                 <ul className="space-y-1.5">
-                  {soap.flags.map((flag, i) => (
+                  {displaySoap.flags.map((flag, i) => (
                     <li key={i} className="text-sm text-rose-700 flex items-start gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0 mt-2" />
                       {flag}
@@ -279,10 +401,14 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* Patient Summary Tab */}
-        {activeTab === 'summary' && summary && (
+        {activeTab === 'summary' && summary && (() => {
+          const tState = translatedData['summary'];
+          const displaySummary = (tState?.data && tState.lang !== 'en' ? tState.data : summary) as PatientSummary;
+          return (
           <div className="space-y-5">
             <DisclaimerBanner />
             <div className="flex items-center justify-between">
@@ -298,23 +424,25 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
               <SectionApproval section="summary" onApprove={() => handleApprove('summary')} />
             </div>
 
+            <TranslateBar
+
+              data={result.patient_summary as unknown as Record<string, unknown>}
+              onTranslated={(translated, lang) => setTranslatedData(prev => ({ ...prev, summary: { data: translated, lang } }))}
+            />
+
             <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6 sm:p-8 space-y-6">
-              <p className="text-base font-medium text-slate-800 leading-relaxed">{summary.greeting}</p>
-
-              <SummarySection title="Visit Summary" content={summary.visit_summary} />
-              <SummarySection title="What the Doctor Found" content={summary.what_the_doctor_found} />
-
+              <p className="text-base font-medium text-slate-800 leading-relaxed">{displaySummary.greeting}</p>
+              <SummarySection title="Visit Summary" content={displaySummary.visit_summary} />
+              <SummarySection title="What the Doctor Found" content={displaySummary.what_the_doctor_found} />
               <div className="bg-medical-50/50 border border-medical-200/30 rounded-xl p-4">
                 <h3 className="text-xs font-bold text-medical-700 uppercase tracking-wider mb-1.5">Your Diagnosis</h3>
-                <p className="text-sm text-medical-900 font-medium leading-relaxed">{summary.your_diagnosis}</p>
+                <p className="text-sm text-medical-900 font-medium leading-relaxed">{displaySummary.your_diagnosis}</p>
               </div>
-
-              {/* Medications */}
-              {summary.your_treatment_plan?.medications?.length > 0 && (
+              {displaySummary.your_treatment_plan?.medications?.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Your Medications</h3>
                   <div className="space-y-2.5">
-                    {summary.your_treatment_plan.medications.map((med, i) => (
+                    {displaySummary.your_treatment_plan.medications.map((med, i) => (
                       <div key={i} className="bg-slate-50/80 rounded-xl p-4 border border-slate-100">
                         <p className="text-sm font-semibold text-slate-900">{med.name}</p>
                         <p className="text-xs text-slate-500 mt-1">{med.what_its_for}</p>
@@ -327,27 +455,22 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                   </div>
                 </div>
               )}
-
-              <ListField label="Lifestyle Advice" items={summary.your_treatment_plan?.lifestyle_advice} />
-
-              {/* Follow Up */}
-              {summary.follow_up && (
+              <ListField label="Lifestyle Advice" items={displaySummary.your_treatment_plan?.lifestyle_advice} />
+              {displaySummary.follow_up && (
                 <div className="bg-medical-50/50 border border-medical-200/30 rounded-xl p-4">
                   <h3 className="text-xs font-bold text-medical-700 uppercase tracking-wider mb-2">Follow-up</h3>
-                  <p className="text-sm text-medical-800 font-medium">{summary.follow_up.next_appointment}</p>
-                  <ListField label="What to Bring" items={summary.follow_up.what_to_bring} />
+                  <p className="text-sm text-medical-800 font-medium">{displaySummary.follow_up.next_appointment}</p>
+                  <ListField label="What to Bring" items={displaySummary.follow_up.what_to_bring} />
                 </div>
               )}
-
-              {/* Warning Signs */}
-              {summary.warning_signs?.length > 0 && (
+              {displaySummary.warning_signs?.length > 0 && (
                 <div className="bg-rose-50/80 border border-rose-200/60 rounded-xl p-4">
                   <h3 className="text-xs font-bold text-rose-700 flex items-center gap-2 mb-2 uppercase tracking-wider">
                     <AlertTriangle className="w-3.5 h-3.5" />
                     Warning Signs - Seek Immediate Help
                   </h3>
                   <ul className="space-y-1.5">
-                    {summary.warning_signs.map((sign, i) => (
+                    {displaySummary.warning_signs.map((sign, i) => (
                       <li key={i} className="text-sm text-rose-700 flex items-start gap-2">
                         <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0 mt-2" />
                         {sign}
@@ -356,11 +479,11 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                   </ul>
                 </div>
               )}
-
-              <p className="text-xs text-slate-400 italic border-t border-slate-100 pt-4">{summary.disclaimer}</p>
+              <p className="text-xs text-slate-400 italic border-t border-slate-100 pt-4">{displaySummary.disclaimer}</p>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* Referral Letter Tab */}
         {activeTab === 'referral' && (
@@ -381,9 +504,16 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
               )}
             </div>
 
+            {referral?.referral_letter && (
+              <TranslateBar
+
+                data={referral as unknown as Record<string, unknown>}
+                onTranslated={(translated, lang) => setTranslatedData(prev => ({ ...prev, referral: { data: translated, lang } }))}
+              />
+            )}
+
             {referral?.referral_letter ? (
               <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6 sm:p-8 space-y-6">
-                {/* Letter Header */}
                 <div className="border-b border-slate-200 pb-5">
                   <div className="flex justify-between items-start">
                     <div>
@@ -397,8 +527,6 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                     <p className="text-sm text-slate-800 font-semibold mt-0.5">{referral.referral_letter.to}</p>
                   </div>
                 </div>
-
-                {/* Urgency */}
                 {referral.referral_letter.urgency && (
                   <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold ${
                     referral.referral_letter.urgency.level === 'emergent' ? 'bg-rose-50 text-rose-700 border border-rose-200/60' :
@@ -409,14 +537,12 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                     {referral.referral_letter.urgency.level?.toUpperCase()} - {referral.referral_letter.urgency.reasoning}
                   </div>
                 )}
-
                 <Field label="Reason for Referral" value={referral.referral_letter.reason_for_referral} highlight />
                 <Field label="Patient" value={referral.referral_letter.patient_summary?.demographics} />
                 <Field label="Presenting Complaint" value={referral.referral_letter.patient_summary?.presenting_complaint} />
                 <Field label="Current Condition" value={referral.referral_letter.relevant_history?.current_condition} />
                 <ListField label="Relevant Past History" items={referral.referral_letter.relevant_history?.relevant_past_history} />
                 <ListField label="Current Medications" items={referral.referral_letter.relevant_history?.current_medications} />
-
                 {referral.referral_letter.investigations && (
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <ListField label="Completed" items={referral.referral_letter.investigations.completed} variant="positive" />
@@ -424,10 +550,8 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                     <ListField label="Recommended Before Visit" items={referral.referral_letter.investigations.recommended_before_visit} />
                   </div>
                 )}
-
                 <ListField label="Clinical Questions for Specialist" items={referral.referral_letter.clinical_questions} />
                 <ListField label="Patient Preparation Checklist" items={referral.referral_letter.patient_preparation_checklist} />
-
                 <div className="flex items-center gap-3 pt-4 border-t border-slate-100">
                   <span className="text-xs text-slate-500 font-medium">Confidence:</span>
                   <ConfidenceBadge score={referral.confidence_score} />
@@ -439,6 +563,138 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                 <p className="text-slate-500 font-medium">No referral indicated for this consultation.</p>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Discharge Summary Tab */}
+        {activeTab === 'discharge' && discharge && (
+          <div className="space-y-5">
+            <DisclaimerBanner />
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <ClipboardList className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 tracking-tight">Discharge Summary</h2>
+                  <p className="text-xs text-slate-500">Formal visit/discharge documentation</p>
+                </div>
+              </div>
+              <SectionApproval section="discharge" onApprove={() => handleApprove('discharge')} />
+            </div>
+
+            <TranslateBar
+
+              data={discharge as unknown as Record<string, unknown>}
+              onTranslated={(translated, lang) => setTranslatedData(prev => ({ ...prev, discharge: { data: translated, lang } }))}
+            />
+
+            <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6 sm:p-8 space-y-6">
+              {discharge.discharge_summary?.header && (
+                <div className="border-b border-slate-200 pb-5">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="text-base font-bold text-slate-900">{discharge.discharge_summary.header.facility}</p>
+                      <p className="text-xs text-slate-500 mt-1">Attending: {discharge.discharge_summary.header.attending_physician}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg">{discharge.discharge_summary.header.date_of_visit}</p>
+                      <p className="text-xs text-slate-400 mt-1">{discharge.discharge_summary.header.visit_type}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 bg-medical-50/50 rounded-xl p-3 border border-medical-200/30">
+                    <div className="flex items-center gap-4">
+                      <div>
+                        <p className="text-xs text-medical-600 font-medium">Patient</p>
+                        <p className="text-sm font-bold text-medical-900">{discharge.discharge_summary.header.patient_name}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-medical-600 font-medium">Age/Gender</p>
+                        <p className="text-sm font-semibold text-medical-900">{discharge.discharge_summary.header.age_gender}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <Field label="Chief Complaint" value={discharge.discharge_summary?.chief_complaint} highlight />
+              <Field label="History of Present Illness" value={discharge.discharge_summary?.history_of_present_illness} />
+              <Field label="Past Medical History" value={discharge.discharge_summary?.past_medical_history} />
+              <Field label="Examination Findings" value={discharge.discharge_summary?.examination_findings} />
+
+              {discharge.discharge_summary?.investigations && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <ListField label="Completed Investigations" items={discharge.discharge_summary.investigations.completed} variant="positive" />
+                  <ListField label="Ordered Investigations" items={discharge.discharge_summary.investigations.ordered} variant="warning" />
+                </div>
+              )}
+
+              {discharge.discharge_summary?.diagnosis && (
+                <div className="bg-medical-50/50 border border-medical-200/30 rounded-xl p-4">
+                  <h3 className="text-xs font-bold text-medical-700 uppercase tracking-wider mb-1.5">Diagnosis</h3>
+                  <p className="text-sm text-medical-900 font-semibold">{discharge.discharge_summary.diagnosis.primary}</p>
+                  {discharge.discharge_summary.diagnosis.secondary?.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {discharge.discharge_summary.diagnosis.secondary.map((d, i) => (
+                        <span key={i} className="text-xs bg-medical-100/50 text-medical-700 px-2.5 py-1 rounded-lg">{d}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {discharge.discharge_summary?.treatment_given && (
+                <div>
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Treatment Given</h3>
+                  {discharge.discharge_summary.treatment_given.medications?.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {discharge.discharge_summary.treatment_given.medications.map((med, i) => (
+                        <div key={i} className="bg-slate-50/80 rounded-xl p-3.5 border border-slate-100">
+                          <p className="text-sm font-semibold text-slate-900">{med.name}</p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                            <span className="text-xs text-slate-500"><span className="font-medium text-slate-600">Dosage:</span> {med.dosage}</span>
+                            <span className="text-xs text-slate-500"><span className="font-medium text-slate-600">Duration:</span> {med.duration}</span>
+                          </div>
+                          {med.instructions && <p className="text-xs text-medical-700 mt-1.5 font-medium">{med.instructions}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <ListField label="Procedures" items={discharge.discharge_summary.treatment_given.procedures} />
+                  <ListField label="Advice" items={discharge.discharge_summary.treatment_given.advice} />
+                </div>
+              )}
+
+              <Field label="Condition at Discharge" value={discharge.discharge_summary?.condition_at_discharge} />
+
+              {discharge.discharge_summary?.follow_up_plan && (
+                <div className="bg-blue-50/80 border border-blue-200/60 rounded-xl p-4 space-y-3">
+                  <h3 className="text-xs font-bold text-blue-700 uppercase tracking-wider">Follow-up Plan</h3>
+                  <Field label="Next Visit" value={discharge.discharge_summary.follow_up_plan.next_visit} />
+                  <ListField label="Investigations Before Visit" items={discharge.discharge_summary.follow_up_plan.investigations_before_visit} />
+                  <ListField label="Referrals" items={discharge.discharge_summary.follow_up_plan.referrals} />
+                  {discharge.discharge_summary.follow_up_plan.emergency_instructions && (
+                    <div className="bg-rose-50/80 border border-rose-200/40 rounded-lg p-3 mt-2">
+                      <p className="text-xs text-rose-700 font-medium">{discharge.discharge_summary.follow_up_plan.emergency_instructions}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {discharge.discharge_summary?.doctor_signature && (
+                <div className="border-t border-slate-200 pt-4">
+                  <p className="text-sm font-semibold text-slate-800">{discharge.discharge_summary.doctor_signature.name}</p>
+                  <p className="text-xs text-slate-500">{discharge.discharge_summary.doctor_signature.designation}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{discharge.discharge_summary.doctor_signature.date}</p>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-4 border-t border-slate-100">
+                <span className="text-xs text-slate-500 font-medium">Confidence:</span>
+                <ConfidenceBadge score={discharge.confidence_score} />
+              </div>
+              <p className="text-xs text-slate-400 italic">{discharge.disclaimer}</p>
+            </div>
           </div>
         )}
 
@@ -493,8 +749,6 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                         <ConfidenceBadge score={trial.confidence_score} />
                       </div>
                     </div>
-
-                    {/* Criteria */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
                       {trial.matched_criteria?.length > 0 && (
                         <div className="bg-emerald-50/50 rounded-xl p-3.5 border border-emerald-200/30">
@@ -522,13 +776,11 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                         </div>
                       )}
                     </div>
-
                     {trial.missing_information?.length > 0 && (
                       <p className="text-xs text-slate-500 mt-3 bg-slate-50 rounded-lg px-3 py-2">
                         <span className="font-medium">Missing info:</span> {trial.missing_information.join(', ')}
                       </p>
                     )}
-
                     {trial.locations?.length > 0 && (
                       <div className="mt-3 pt-3 border-t border-slate-100">
                         <p className="text-xs text-slate-500">
@@ -554,7 +806,7 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
             <Sparkles className="w-4 h-4 text-medical-500" />
             AI Processing Details
           </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             {result.processing_steps?.map((step, i) => (
               <div key={i} className="bg-slate-50 rounded-xl p-3">
                 <p className="text-xs text-slate-500 font-medium">{step.step}</p>
@@ -577,7 +829,7 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
   );
 }
 
-// ─── Reusable Sub-components ─────────────────────────────────
+// --- Reusable Sub-components ---
 
 function SOAPSection({ title, subtitle, children, defaultOpen = false }: { title: string; subtitle?: string; children: React.ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);

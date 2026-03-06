@@ -1,0 +1,162 @@
+name: Deploy ClinicalSetu to AWS
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: ClinicalSetu
+  STACK_NAME: ClinicalSetu-Stack
+  STAGE: prod
+
+jobs:
+  deploy:
+    name: Deploy Backend + Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      # ----- Checkout -----
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ----- AWS Credentials -----
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ----- Python (for Lambda packaging) -----
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ----- Node.js (for frontend build) -----
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      # ----- Step 1: Package Lambda -----
+      - name: Package Lambda function
+        run: python scripts/package_lambda.py
+
+      # ----- Step 2: Upload Lambda ZIP to S3 -----
+      - name: Get AWS Account ID
+        id: account
+        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_OUTPUT
+
+      - name: Create S3 bucket for Lambda (if not exists)
+        run: |
+          BUCKET="${{ env.PROJECT_NAME }}-lambda-${{ steps.account.outputs.id }}-${{ env.AWS_REGION }}"
+          echo "LAMBDA_BUCKET=$BUCKET" >> $GITHUB_ENV
+          aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null || \
+            aws s3api create-bucket --bucket "$BUCKET" --region ${{ env.AWS_REGION }}
+
+      - name: Upload Lambda ZIP to S3
+        run: aws s3 cp lambda_deployment.zip "s3://${{ env.LAMBDA_BUCKET }}/lambda_deployment.zip"
+
+      # ----- Step 3: Deploy CloudFormation -----
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/cloudformation.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              ProjectName=${{ env.PROJECT_NAME }} \
+              Stage=${{ env.STAGE }} \
+              LambdaS3Bucket=${{ env.LAMBDA_BUCKET }} \
+              LambdaS3Key=lambda_deployment.zip \
+              BedrockModelId="us.amazon.nova-lite-v1:0" \
+              FallbackModelId="anthropic.claude-3-haiku-20240307-v1:0" \
+            --no-fail-on-empty-changeset
+
+      # ----- Step 4: Get Stack Outputs -----
+      - name: Get stack outputs
+        id: stack
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text)
+          FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue" \
+            --output text)
+          CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontUrl'].OutputValue" \
+            --output text)
+          COGNITO_POOL_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='CognitoIdentityPoolId'].OutputValue" \
+            --output text)
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+          echo "frontend_bucket=$FRONTEND_BUCKET" >> $GITHUB_OUTPUT
+          echo "cloudfront_url=$CLOUDFRONT_URL" >> $GITHUB_OUTPUT
+          echo "cognito_pool_id=$COGNITO_POOL_ID" >> $GITHUB_OUTPUT
+
+      # ----- Step 5: Build Frontend -----
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ steps.stack.outputs.api_url }}
+          VITE_COGNITO_IDENTITY_POOL_ID: ${{ steps.stack.outputs.cognito_pool_id }}
+          VITE_AWS_REGION: ${{ env.AWS_REGION }}
+        run: npm run build
+
+      # ----- Step 6: Deploy Frontend to S3 -----
+      - name: Sync frontend to S3
+        working-directory: frontend
+        run: |
+          aws s3 sync dist/ "s3://${{ steps.stack.outputs.frontend_bucket }}/" \
+            --delete \
+            --cache-control "public, max-age=31536000" \
+            --exclude "index.html"
+          aws s3 cp dist/index.html "s3://${{ steps.stack.outputs.frontend_bucket }}/index.html" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      # ----- Step 7: Invalidate CloudFront cache -----
+      - name: Get CloudFront Distribution ID
+        id: cf
+        run: |
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${{ env.PROJECT_NAME }} Frontend CDN'].Id" \
+            --output text)
+          echo "dist_id=$DIST_ID" >> $GITHUB_OUTPUT
+
+      - name: Invalidate CloudFront cache
+        if: steps.cf.outputs.dist_id != ''
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.cf.outputs.dist_id }} \
+            --paths "/*"
+
+      # ----- Summary -----
+      - name: Deployment summary
+        run: |
+          echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | URL |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | ${{ steps.stack.outputs.cloudfront_url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| API | ${{ steps.stack.outputs.api_url }}/api/process |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### AWS Services Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- Lambda (Python 3.12) - Backend API" >> $GITHUB_STEP_SUMMARY
+          echo "- API Gateway (REST) - HTTPS endpoint" >> $GITHUB_STEP_SUMMARY
+          echo "- S3 - Frontend hosting + Lambda code" >> $GITHUB_STEP_SUMMARY
+          echo "- CloudFront - CDN with HTTPS" >> $GITHUB_STEP_SUMMARY
+          echo "- DynamoDB - Response caching" >> $GITHUB_STEP_SUMMARY
+          echo "- Amazon Bedrock - Nova Lite (primary) + Claude Haiku (fallback)" >> $GITHUB_STEP_SUMMARY
