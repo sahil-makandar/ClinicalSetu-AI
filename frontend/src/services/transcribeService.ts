@@ -3,7 +3,6 @@ import {
   StartMedicalStreamTranscriptionCommand,
   type MedicalTranscriptResultStream,
 } from '@aws-sdk/client-transcribe-streaming';
-import { CognitoIdentityClient } from '@aws-sdk/client-cognito-identity';
 import { fromCognitoIdentityPool } from '@aws-sdk/credential-providers';
 
 const REGION = import.meta.env.VITE_AWS_REGION || 'us-east-1';
@@ -18,11 +17,10 @@ let client: TranscribeStreamingClient | null = null;
 
 function getClient(): TranscribeStreamingClient {
   if (!client) {
-    const cognitoClient = new CognitoIdentityClient({ region: REGION });
     client = new TranscribeStreamingClient({
       region: REGION,
       credentials: fromCognitoIdentityPool({
-        client: cognitoClient,
+        clientConfig: { region: REGION },
         identityPoolId: IDENTITY_POOL_ID,
       }),
     });
