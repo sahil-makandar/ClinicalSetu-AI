@@ -9,7 +9,7 @@ Description: >
 Parameters:
   ProjectName:
     Type: String
-    Default: ClinicalSetu
+    Default: clinicalsetu
     Description: Name prefix for all resources
 
   BedrockModelId:
@@ -59,7 +59,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-LambdaRole-${Stage}'
+      RoleName: !Sub '${ProjectName}-lambda-role-${Stage}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -107,7 +107,7 @@ Resources:
   CacheTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub '${ProjectName}-Cache-${Stage}'
+      TableName: !Sub '${ProjectName}-cache-${Stage}'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: cache_key
@@ -128,7 +128,7 @@ Resources:
   ProcessConsultationFunction:
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Sub '${ProjectName}-API-${Stage}'
+      FunctionName: !Sub '${ProjectName}-api-${Stage}'
       Description: Processes clinical consultations through Amazon Bedrock
       Runtime: python3.12
       Handler: lambda_function.lambda_handler
@@ -156,7 +156,7 @@ Resources:
   ApiGateway:
     Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: !Sub '${ProjectName}-API-${Stage}'
+      Name: !Sub '${ProjectName}-api-${Stage}'
       Description: ClinicalSetu REST API
       EndpointConfiguration:
         Types:
@@ -368,13 +368,13 @@ Resources:
   TranscribeIdentityPool:
     Type: AWS::Cognito::IdentityPool
     Properties:
-      IdentityPoolName: !Sub '${ProjectName}-TranscribePool-${Stage}'
+      IdentityPoolName: !Sub '${ProjectName}-transcribe-pool-${Stage}'
       AllowUnauthenticatedIdentities: true
 
   TranscribeUnauthRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-TranscribeUnauth-${Stage}'
+      RoleName: !Sub '${ProjectName}-transcribe-unauth-${Stage}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:

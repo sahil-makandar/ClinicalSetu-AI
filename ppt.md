@@ -80,42 +80,52 @@ Team Sahrova | AI for Bharat Hackathon
 
 ---
 
-## SLIDE 5: AWS ARCHITECTURE
+## SLIDE 5: AWS ARCHITECTURE (9 Services — All Deployed)
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    AWS CLOUD                             │
-│                                                         │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │  AWS      │    │  API Gateway │    │  AWS Lambda   │  │
-│  │  Amplify  │───►│  (REST API)  │───►│  (Python)     │  │
-│  │  (React)  │    │  + CORS      │    │  1024MB/120s  │  │
-│  └──────────┘    └──────────────┘    └──────┬───────┘  │
-│                                              │          │
-│                          ┌───────────────────┼────┐     │
-│                          ▼                   ▼    ▼     │
-│                  ┌──────────────┐  ┌─────┐ ┌──────┐    │
-│                  │ Amazon       │  │ S3  │ │Bedrock│    │
-│                  │ Bedrock      │  │     │ │Knowl- │    │
-│                  │ Claude 3     │  │Trial│ │edge   │    │
-│                  │ Sonnet       │  │Data │ │Bases  │    │
-│                  └──────────────┘  └─────┘ └──────┘    │
-│                                                         │
-│  5 Bedrock calls per consultation:                      │
-│  SOAP → Patient Summary → Referral → Discharge → Trials│
-│  + On-demand translation (6th call)                     │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       AWS CLOUD                               │
+│                                                               │
+│  GitHub Actions CI/CD ──► CloudFormation (IaC)                │
+│                                                               │
+│  ┌───────────┐  ┌──────────┐  ┌──────────────┐  ┌────────┐  │
+│  │CloudFront │  │   S3     │  │ API Gateway  │  │ Lambda │  │
+│  │  (CDN)    │─►│(Frontend)│  │  (REST API)  │─►│Python  │  │
+│  │  HTTPS    │  │          │  │  + CORS      │  │3.12    │  │
+│  └───────────┘  └──────────┘  └──────────────┘  └───┬────┘  │
+│                                                       │       │
+│                   ┌───────────────┬───────────────────┤       │
+│                   ▼               ▼                   ▼       │
+│           ┌──────────────┐ ┌──────────┐      ┌────────────┐  │
+│           │ Amazon       │ │ DynamoDB │      │ Bedrock    │  │
+│           │ Bedrock      │ │ (Cache)  │      │ Knowledge  │  │
+│           │ Nova Lite    │ │ 24h TTL  │      │ Bases      │  │
+│           │ + Haiku      │ │ PAY/REQ  │      │ (optional) │  │
+│           │ (fallback)   │ └──────────┘      └────────────┘  │
+│           └──────────────┘                                    │
+│                                                               │
+│  Browser ──► Cognito Identity Pool ──► Transcribe Medical     │
+│              (unauthenticated)          (streaming speech)     │
+│                                                               │
+│  5 Bedrock calls per consultation (Converse API):             │
+│  SOAP → Patient Summary → Referral → Discharge → Trials      │
+│  + On-demand translation (6th call)                           │
+│  + Retry with exponential backoff + model fallback            │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**AWS Services Used:**
+**9 AWS Services — All Deployed via CloudFormation IaC:**
 | Service | Purpose |
 |---------|---------|
-| **Amazon Bedrock** (Claude 3 Sonnet) | Core AI engine — all 5 outputs + translation |
-| **Bedrock Knowledge Bases** + Titan Embeddings | RAG-powered clinical trial matching |
-| **AWS Lambda** (Python 3.12) | Serverless backend, 5 chained inference calls |
-| **API Gateway** (REST) | Unified API with CORS, routing (`/process`, `/translate`) |
-| **AWS Amplify** | CI/CD frontend hosting from GitHub |
-| **Amazon S3** | Clinical trial data storage for Knowledge Base |
+| **Amazon Bedrock** (Nova Lite + Claude Haiku) | Core AI engine — Converse API with model fallback chain |
+| **AWS Lambda** (Python 3.12, 1024MB) | Serverless backend, retry/backoff, partial result handling |
+| **API Gateway** (REST) | Unified API with CORS (`/process`, `/translate`) |
+| **Amazon S3** | Frontend static hosting + Lambda deployment packages |
+| **Amazon CloudFront** | CDN with HTTPS, SPA error routing |
+| **Amazon DynamoDB** | Response caching (SHA-256 keys, 24h TTL, PAY_PER_REQUEST) |
+| **Amazon Cognito** | Identity Pool for secure browser-to-AWS Transcribe access |
+| **Amazon Transcribe Medical** | Real-time clinical speech-to-text streaming |
+| **CloudFormation** | Infrastructure as Code — entire stack in one template |
 
 ---
 

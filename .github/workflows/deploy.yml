@@ -6,8 +6,8 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  PROJECT_NAME: ClinicalSetu
-  STACK_NAME: ClinicalSetu-Stack
+  PROJECT_NAME: clinicalsetu
+  STACK_NAME: clinicalsetu-stack
   STAGE: prod
 
 jobs:

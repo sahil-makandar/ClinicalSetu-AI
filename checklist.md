@@ -70,29 +70,32 @@ STEP 4: GitHub Repository          → Only if all above pass
 - [ ] **Slide 1:** Title + Team Sahrova + "Capture Once. Reuse Responsibly."
 - [ ] **Slide 2:** Problem (4 pain points: documentation burden, poor continuity, fragmented referrals, missed trials) + India stats (1 doctor per 1,511 people, 500+ patients/day in govt OPDs)
 - [ ] **Slide 3:** Solution overview - single input → 4 AI outputs diagram
-- [ ] **Slide 4:** Architecture diagram (Prototype: solid lines + Production: dashed lines)
-  - Must clearly show: React → Amplify → API Gateway → Invoker Lambda → **Bedrock Agent** → Tool Executor Lambda → Bedrock (Claude 3 Sonnet)
-  - Also show: Bedrock Agent → Knowledge Base (RAG) → S3
+- [ ] **Slide 4:** Architecture diagram (all 9 AWS services)
+  - Must clearly show: React → CloudFront → S3 → API Gateway → Lambda → Bedrock (Nova Lite / Claude Haiku fallback)
+  - Also show: Browser → Cognito → Transcribe Medical (streaming), Lambda → DynamoDB (cache)
+  - GitHub Actions CI/CD pipeline deploying CloudFormation IaC
 - [ ] **Slide 5:** AWS Services - WHY each service + HOW it's used + WHAT value it adds
-  - **Bedrock Agent**: Agentic orchestration - DECIDES which tools to call based on consultation
-  - **Bedrock (Claude 3 Sonnet)**: Foundation model for clinical reasoning
-  - **Knowledge Bases**: RAG pipeline for semantic trial matching
-  - **Lambda** (x2): Serverless compute - Invoker + Tool Executor
-  - **API Gateway**: Secure REST API with CORS
-  - **Amplify**: CI/CD + hosting from GitHub
-  - **S3**: Clinical trial data store for KB
-- [ ] **Slide 6:** AI Pipeline deep-dive - **agentic tool use**, prompt engineering, JSON schema validation, confidence scoring
+  - **Amazon Bedrock** (Nova Lite + Claude Haiku): Converse API with model fallback chain
+  - **AWS Lambda**: Serverless backend with retry/backoff, partial result handling
+  - **API Gateway**: REST API with CORS (`/process`, `/translate`)
+  - **Amazon S3**: Frontend static hosting + Lambda deployment packages
+  - **Amazon CloudFront**: CDN with HTTPS, SPA routing
+  - **Amazon DynamoDB**: Response caching (SHA-256 keys, 24h TTL, PAY_PER_REQUEST)
+  - **Amazon Cognito**: Identity Pool for unauthenticated Transcribe Medical access
+  - **Amazon Transcribe Medical**: Real-time clinical speech-to-text streaming
+  - **CloudFormation**: Infrastructure as Code — one-click deployment
+- [ ] **Slide 6:** AI Pipeline deep-dive - Converse API, retry/fallback chain, prompt engineering, JSON schema validation, confidence scoring, DynamoDB caching
 - [ ] **Slide 7:** Demo screenshots (SOAP Note, Patient Summary, Referral Letter, Trial Matches)
 - [ ] **Slide 8:** Responsible AI - non-diagnostic by design, doctor-in-the-loop validation, "AI-Generated" disclaimers, synthetic data only, Bedrock Guardrails
 - [ ] **Slide 9:** India Impact - ABDM alignment, rural telemedicine, multilingual roadmap, clinical trial access democratization
 - [ ] **Slide 10:** RAG Pipeline for Trial Matching - S3 → Titan Embeddings → Knowledge Base → semantic search → confidence scoring
-- [ ] **Slide 11:** Production Roadmap - Cognito auth, Step Functions orchestration, DynamoDB persistence, Transcribe Medical speech-to-text, HealthLake FHIR
+- [ ] **Slide 11:** Production Roadmap - Step Functions parallel orchestration, HealthLake FHIR, ABDM/ABHA integration, Bedrock Guardrails
 - [ ] **Slide 12:** Summary + key differentiators + call to action
 
 ### Must answer these 3 questions clearly in PPT (evaluation criteria):
 - [ ] **WHY AI is required:** Unstructured clinical narratives → structured multi-format outputs. Rule-based systems can't do this.
-- [ ] **HOW AWS services are used:** Architecture slide shows exact service-to-service flow
-- [ ] **WHAT value the AI layer adds:** 4 outputs from 1 input, confidence scoring, trial matching via RAG
+- [ ] **HOW AWS services are used:** 9 services in architecture slide — every one deployed and functional
+- [ ] **WHAT value the AI layer adds:** 5 outputs from 1 input, confidence scoring, trial matching, medical speech-to-text, multilingual translation
 
 ---
 
@@ -167,16 +170,15 @@ STEP 4: GitHub Repository          → Only if all above pass
 
 | Service | Purpose | Built? | Mentioned in PPT? |
 |---------|---------|:------:|:------------------:|
-| **Amazon Bedrock Agent** | Agentic orchestration with tool use | ✅ code | ✅ HIGHLIGHT |
-| Amazon Bedrock (Claude 3 Sonnet) | Foundation model - clinical reasoning | ✅ code | ✅ |
-| Bedrock Knowledge Bases | RAG for clinical trial matching | ⬜ deploy | ✅ |
-| AWS Lambda (x2 Python) | Invoker + Tool Executor | ✅ code | ✅ |
-| Amazon API Gateway | REST API endpoint | ⬜ deploy | ✅ |
-| AWS Amplify | Frontend hosting from GitHub | ⬜ deploy | ✅ |
-| Amazon S3 | Trial data store for KB | ⬜ deploy | ✅ |
-| *Amazon Cognito* | *Auth (roadmap)* | 📋 | ✅ roadmap slide |
-| *Amazon DynamoDB* | *Persistence (roadmap)* | 📋 | ✅ roadmap slide |
-| *Amazon Transcribe Medical* | *Speech-to-text (roadmap)* | 📋 | ✅ roadmap slide |
+| **Amazon Bedrock** (Nova Lite + Claude Haiku fallback) | Core AI engine — Converse API with retry/fallback | ✅ deployed | ✅ HIGHLIGHT |
+| **AWS Lambda** (Python 3.12) | Serverless backend, 5 chained inference calls + translation | ✅ deployed | ✅ |
+| **Amazon API Gateway** (REST) | Unified API with CORS (`/process`, `/translate`) | ✅ deployed | ✅ |
+| **Amazon S3** | Frontend hosting + Lambda code storage | ✅ deployed | ✅ |
+| **Amazon CloudFront** | CDN with HTTPS for frontend | ✅ deployed | ✅ |
+| **Amazon DynamoDB** | Response caching with 24h TTL (PAY_PER_REQUEST) | ✅ deployed | ✅ |
+| **Amazon Cognito** | Identity Pool for Transcribe Medical browser access | ✅ deployed | ✅ |
+| **Amazon Transcribe Medical** | Real-time clinical speech-to-text streaming | ✅ deployed | ✅ |
+| Bedrock Knowledge Bases | RAG for clinical trial matching | ⬜ optional | ✅ |
 | *AWS HealthLake* | *FHIR integration (roadmap)* | 📋 | ✅ roadmap slide |
 
 ---
@@ -185,7 +187,8 @@ STEP 4: GitHub Repository          → Only if all above pass
 
 | Criterion (Weight) | How We Score High |
 |---|---|
-| **Technical Excellence (30%)** | **Bedrock Agent** with tool use (agentic, not just prompts). KB RAG for trials. 2 Lambdas + API GW + Amplify. JSON validation, safety guardrails, serverless. |
-| **Innovation & Creativity (30%)** | **Agentic AI** (agent decides tools). "Capture Once" = 4 outputs from 1 input. Trial matching via RAG. Confidence scoring. Non-diagnostic by design. |
-| **Impact & Relevance (25%)** | 1 doctor per 1,511 people. 500+ patients/day in govt hospitals. ABDM alignment. Rural telemedicine. Multilingual roadmap. Clinical trial democratization. |
-| **Completeness & Presentation (15%)** | Live URL, polished UI, rehearsed video, professional PPT, comprehensive README. |
+| **Implementation (50%)** | 9 AWS services deployed via CloudFormation IaC. Bedrock Converse API with retry/fallback (Nova Lite → Claude Haiku). DynamoDB caching. Transcribe Medical streaming. CI/CD via GitHub Actions. |
+| **Technical Depth (20%)** | Exponential backoff + jitter for throttling. Model-agnostic Converse API. Partial result handling. SHA-256 cache keys. Cognito unauthenticated identity for secure browser-to-AWS access. |
+| **Cost Efficiency (10%)** | Amazon Nova Lite as primary model (~80% cheaper than Sonnet). DynamoDB PAY_PER_REQUEST + 24h TTL cache. Serverless everything. CloudFront caching. |
+| **Impact (10%)** | 1 doctor per 1,511 people. 500+ patients/day in govt hospitals. ABDM alignment. 9 Indian languages. Clinical trial democratization. |
+| **Completeness & Presentation (10%)** | Live URL, polished UI, rehearsed video, professional PPT, comprehensive README. |
