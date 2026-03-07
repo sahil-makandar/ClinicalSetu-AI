@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mic, MicOff, Send, Loader2, Stethoscope, Sparkles, User, Zap, FileText, UserCheck, FlaskConical, ChevronRight, Globe, Type, AudioLines, Bot, ArrowRight } from 'lucide-react';
 import { sampleConsultations } from '../data/sampleConsultations';

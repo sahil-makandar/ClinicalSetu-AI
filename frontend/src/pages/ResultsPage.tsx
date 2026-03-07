@@ -846,7 +846,6 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                 {result.processing_steps?.map((step, i) => {
                   const isSupervisor = step.step.includes('Supervisor');
                   const isToolCall = step.step.includes('called');
-                  const agentName = step.step.includes('->') ? step.step.split('-> ')[1] : step.step.replace('Agent called: ', '');
                   const colorMap: Record<string, string> = {
                     'Supervisor': 'border-indigo-300 bg-indigo-50 text-indigo-600',
                     'SOAPAgent': 'border-teal-300 bg-teal-50 text-teal-600',
