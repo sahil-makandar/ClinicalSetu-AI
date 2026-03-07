@@ -493,6 +493,46 @@ def main():
         supervisor_id = response["agent"]["agentId"]
         print(f"  Created supervisor: {supervisor_id}")
 
+    # Wait for supervisor to leave CREATING state
+    for attempt in range(30):
+        sup_status = bedrock_agent.get_agent(agentId=supervisor_id)["agent"]["agentStatus"]
+        if sup_status != "CREATING":
+            print(f"  Supervisor status: {sup_status}")
+            break
+        if attempt % 5 == 0:
+            print(f"  Waiting for supervisor... ({sup_status})")
+        time.sleep(3)
+
+    # Step 4.5: Add IAM permissions for supervisor to invoke collaborator agents
+    print("\n[4.5/6] Updating IAM role with collaborator invoke permissions...")
+    collab_arns = []
+    for name, info in collaborators.items():
+        collab_arns.append(f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:agent-alias/{info['agent_id']}/*")
+    if collab_arns:
+        collab_policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["bedrock:InvokeAgent", "bedrock:GetAgentAlias"],
+                    "Resource": collab_arns
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": ["bedrock:GetAgent"],
+                    "Resource": [f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:agent/*"]
+                }
+            ]
+        }
+        iam.put_role_policy(
+            RoleName="ClinicalSetu-MultiAgentRole",
+            PolicyName="ClinicalSetuCollaboratorInvokePolicy",
+            PolicyDocument=json.dumps(collab_policy)
+        )
+        print(f"  Added invoke permissions for {len(collab_arns)} collaborators")
+        print("  Waiting for IAM policy propagation...")
+        time.sleep(15)  # IAM propagation can take 10-15s
+
     # Step 5: Associate Collaborators with Supervisor
     print("\n[5/6] Associating collaborators with supervisor...")
     collaboration_instructions = {
@@ -502,22 +542,35 @@ def main():
         "ClinicalSetu-TrialAgent": "Call AFTER SOAPAgent completes. Send the SOAP assessment section, patient age, and gender. It matches the patient against clinical trials. All matches are informational only.",
     }
 
+    associated_count = 0
     for agent_name, collab_info in collaborators.items():
-        try:
-            bedrock_agent.associate_agent_collaborator(
-                agentId=supervisor_id,
-                agentVersion="DRAFT",
-                agentDescriptor={"aliasArn": collab_info["alias_arn"]},
-                collaboratorName=agent_name,
-                collaborationInstruction=collaboration_instructions.get(agent_name, ""),
-                relayConversationHistory="TO_COLLABORATOR"
-            )
-            print(f"  Associated: {agent_name}")
-        except Exception as e:
-            if "Conflict" in str(e) or "ConflictException" in str(type(e)):
-                print(f"  Already associated: {agent_name}")
-            else:
-                print(f"  Error associating {agent_name}: {e}")
+        for retry in range(3):
+            try:
+                bedrock_agent.associate_agent_collaborator(
+                    agentId=supervisor_id,
+                    agentVersion="DRAFT",
+                    agentDescriptor={"aliasArn": collab_info["alias_arn"]},
+                    collaboratorName=agent_name,
+                    collaborationInstruction=collaboration_instructions.get(agent_name, ""),
+                    relayConversationHistory="TO_COLLABORATOR"
+                )
+                print(f"  Associated: {agent_name}")
+                associated_count += 1
+                break
+            except Exception as e:
+                if "Conflict" in str(e) or "ConflictException" in str(type(e)):
+                    print(f"  Already associated: {agent_name}")
+                    associated_count += 1
+                    break
+                elif retry < 2:
+                    print(f"  Retry {retry+1}/3 associating {agent_name}: {e}")
+                    time.sleep(15)
+                else:
+                    print(f"  FAILED to associate {agent_name}: {e}")
+
+    if associated_count == 0:
+        print("  ERROR: No collaborators associated! Cannot prepare supervisor.")
+        return
 
     # Prepare supervisor and create alias
     print("\n[6/6] Preparing supervisor...")

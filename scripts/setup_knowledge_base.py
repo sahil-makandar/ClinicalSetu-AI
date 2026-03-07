@@ -384,6 +384,20 @@ def create_vector_index(endpoint):
         client.indices.create(index=AOSS_INDEX_NAME, body=index_body)
         print(f"  Created vector index: {AOSS_INDEX_NAME}")
 
+        # Wait for index to propagate in AOSS before Bedrock can validate it
+        print("  Waiting for index propagation in OpenSearch Serverless...")
+        for wait_attempt in range(12):
+            time.sleep(10)
+            try:
+                if client.indices.exists(index=AOSS_INDEX_NAME):
+                    print(f"  Index verified after {(wait_attempt + 1) * 10}s")
+                    break
+            except Exception:
+                pass
+        else:
+            print("  Index not yet verified, adding extra wait...")
+            time.sleep(30)
+
     except ImportError:
         # Fall back to urllib-based index creation
         import urllib.request
@@ -453,9 +467,26 @@ def create_vector_index(endpoint):
             )
             urllib.request.urlopen(req)
             print(f"  Created vector index: {AOSS_INDEX_NAME}")
+
+            # Wait for index to propagate
+            print("  Waiting for index propagation in OpenSearch Serverless...")
+            for wait_attempt in range(12):
+                time.sleep(10)
+                try:
+                    check_req2 = AWSRequest(method="HEAD", url=url, headers={"Host": endpoint.replace("https://", "")})
+                    SigV4Auth(credentials, "aoss", REGION).add_auth(check_req2)
+                    req2 = urllib.request.Request(url, method="HEAD", headers=dict(check_req2.headers))
+                    urllib.request.urlopen(req2)
+                    print(f"  Index verified after {(wait_attempt + 1) * 10}s")
+                    break
+                except Exception:
+                    pass
+            else:
+                print("  Index not yet verified, adding extra wait...")
+                time.sleep(30)
         except Exception as e:
             print(f"  Index creation error (non-fatal): {e}")
-            print("  The index will be auto-created by Bedrock KB on first sync.")
+            print("  Will retry KB creation with delay...")
 
 
 def find_existing_kb():
@@ -478,34 +509,51 @@ def create_knowledge_base(role_arn, collection_arn):
         print(f"  KB exists: {KB_NAME} ({existing_id})")
         return existing_id
 
-    response = bedrock_agent.create_knowledge_base(
-        name=KB_NAME,
-        description=KB_DESCRIPTION,
-        roleArn=role_arn,
-        knowledgeBaseConfiguration={
-            "type": "VECTOR",
-            "vectorKnowledgeBaseConfiguration": {
-                "embeddingModelArn": EMBEDDING_MODEL_ARN,
-                "embeddingModelConfiguration": {
-                    "bedrockEmbeddingModelConfiguration": {
-                        "dimensions": 1024,
-                    }
+    # Retry KB creation — AOSS index may take time to become visible to Bedrock
+    last_error = None
+    for kb_attempt in range(5):
+        try:
+            response = bedrock_agent.create_knowledge_base(
+                name=KB_NAME,
+                description=KB_DESCRIPTION,
+                roleArn=role_arn,
+                knowledgeBaseConfiguration={
+                    "type": "VECTOR",
+                    "vectorKnowledgeBaseConfiguration": {
+                        "embeddingModelArn": EMBEDDING_MODEL_ARN,
+                        "embeddingModelConfiguration": {
+                            "bedrockEmbeddingModelConfiguration": {
+                                "dimensions": 1024,
+                            }
+                        },
+                    },
                 },
-            },
-        },
-        storageConfiguration={
-            "type": "OPENSEARCH_SERVERLESS",
-            "opensearchServerlessConfiguration": {
-                "collectionArn": collection_arn,
-                "vectorIndexName": AOSS_INDEX_NAME,
-                "fieldMapping": {
-                    "vectorField": "embedding",
-                    "textField": "text",
-                    "metadataField": "metadata",
+                storageConfiguration={
+                    "type": "OPENSEARCH_SERVERLESS",
+                    "opensearchServerlessConfiguration": {
+                        "collectionArn": collection_arn,
+                        "vectorIndexName": AOSS_INDEX_NAME,
+                        "fieldMapping": {
+                            "vectorField": "embedding",
+                            "textField": "text",
+                            "metadataField": "metadata",
+                        },
+                    },
                 },
-            },
-        },
-    )
+            )
+            last_error = None
+            break
+        except Exception as e:
+            last_error = e
+            if "no such index" in str(e) or "404" in str(e):
+                wait_secs = 30 * (kb_attempt + 1)
+                print(f"  Index not yet visible to Bedrock (attempt {kb_attempt + 1}/5), waiting {wait_secs}s...")
+                time.sleep(wait_secs)
+            else:
+                raise
+
+    if last_error:
+        raise last_error
 
     kb_id = response["knowledgeBase"]["knowledgeBaseId"]
     print(f"  Created KB: {KB_NAME} ({kb_id})")
