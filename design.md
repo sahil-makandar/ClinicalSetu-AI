@@ -7,7 +7,7 @@ ClinicalSetu is a clinical intelligence bridge that captures clinical intent onc
 **Core Principles:**
 - Non-diagnostic system
 - Doctor-in-the-loop validation required
-- Built using Amazon Bedrock and Amazon Q
+- Built using Amazon Bedrock (Nova Lite + Claude Haiku), Bedrock Multi-Agent Collaboration, Transcribe Medical, DynamoDB, Cognito
 - Operates on synthetic and public datasets only
 - No PHI storage in prototype phase
 
@@ -45,10 +45,10 @@ The ClinicalSetu platform follows a serverless, event-driven architecture levera
 ┌─────────────────────────────────────────────────────────────────┐
 │                    AI Processing Layer                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Amazon Bedrock                                           │  │
-│  │  - Claude 3 / Titan models                                │  │
-│  │  - Prompt orchestration                                   │  │
-│  │  - Guardrails                                             │  │
+│  │  Amazon Bedrock (Converse API)                             │  │
+│  │  - Amazon Nova Lite (primary) + Claude Haiku (fallback)   │  │
+│  │  - Retry with exponential backoff + model fallback chain  │  │
+│  │  - Structured JSON output with confidence scoring         │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -56,9 +56,9 @@ The ClinicalSetu platform follows a serverless, event-driven architecture levera
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Speech Layer (Optional)                     │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Amazon Transcribe Medical                                │  │
-│  │  - Real-time streaming                                    │  │
-│  │  - Medical vocabulary                                     │  │
+│  │  Amazon Transcribe Medical (DEPLOYED)                      │  │
+│  │  - Real-time streaming via Cognito Identity Pool           │  │
+│  │  - Medical vocabulary (PRIMARYCARE specialty)              │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -66,7 +66,7 @@ The ClinicalSetu platform follows a serverless, event-driven architecture levera
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Knowledge Layer                             │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Amazon Q Business                                        │  │
+│  │  Bedrock Knowledge Bases (optional RAG)                    │  │
 │  │  - RAG over public clinical guidelines                    │  │
 │  │  - Trial protocol knowledge base                          │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -81,10 +81,10 @@ The ClinicalSetu platform follows a serverless, event-driven architecture levera
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Data Layer                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Amazon DynamoDB                                          │  │
-│  │  - Structured clinical records                            │  │
-│  │  - Session metadata                                       │  │
-│  │  - Audit logs                                             │  │
+│  │  Amazon DynamoDB (DEPLOYED)                                │  │
+│  │  - Response caching (SHA-256 keys, 24h TTL)               │  │
+│  │  - PAY_PER_REQUEST billing mode                           │  │
+│  │  - Fail-safe: cache errors never break main flow          │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Amazon S3                                                │  │
@@ -113,11 +113,12 @@ The doctor interface is a web-based single-page application that serves as the p
 
 **Input Capture Module**
 
-- **Voice Input**: WebRTC-based audio streaming to Amazon Transcribe Medical
-  - Real-time transcription with medical vocabulary
-  - Speaker diarization for multi-participant consultations
-  - Punctuation and formatting restoration
-  - Confidence scoring per utterance
+- **Voice Input**: Amazon Transcribe Medical streaming (DEPLOYED)
+  - Browser microphone → Cognito Identity Pool → Transcribe Medical WebSocket
+  - Real-time transcription with medical vocabulary (PRIMARYCARE specialty)
+  - PCM audio at 16kHz, mono channel, with noise suppression
+  - Interim + final transcript callbacks for live UI updates
+  - Graceful fallback to Web Speech API when Cognito is not configured (local dev)
 
 - **Text Input**: Rich text editor with autocomplete
   - Medical terminology suggestions
@@ -150,12 +151,13 @@ The doctor interface is a web-based single-page application that serves as the p
 
 **Technical Implementation**
 
-- Framework: React with TypeScript
-- State Management: Redux Toolkit for complex state
-- API Communication: Axios with retry logic
-- Real-time Updates: WebSocket connection via API Gateway
-- Authentication: AWS Cognito with MFA
-- Hosting: Amazon CloudFront + S3 static hosting
+- Framework: React 19 with TypeScript (Vite build)
+- State Management: React hooks (useState, useRef, useCallback)
+- API Communication: Axios with 120s timeout
+- Speech-to-Text: @aws-sdk/client-transcribe-streaming via Cognito Identity Pool
+- Authentication: Cognito Identity Pool (unauthenticated for Transcribe Medical access)
+- Hosting: Amazon CloudFront CDN + S3 static hosting (deployed via CloudFormation)
+- CI/CD: GitHub Actions → CloudFormation → S3 sync → CloudFront invalidation
 
 ---
 
@@ -263,14 +265,17 @@ Implementation via AWS Step Functions:
 
 **Technical Implementation**
 
-- Amazon Bedrock API invocation via boto3
-- Model: Claude 3 Sonnet for complex reasoning, Titan for simpler tasks
+- Amazon Bedrock **Converse API** invocation via boto3 (model-agnostic)
+- Primary model: **Amazon Nova Lite** (`us.amazon.nova-lite-v1:0`) — cost-efficient
+- Fallback model: **Claude 3 Haiku** (`anthropic.claude-3-haiku-20240307-v1:0`) — auto-failover
 - Temperature: 0.3 for consistency
 - Max tokens: 4096 per invocation
-- Retry logic: Exponential backoff with jitter
-- Timeout: 30 seconds per LLM call
-- Prompt injection detection via Bedrock Guardrails
-- Output filtering for sensitive content
+- **Retry logic**: Exponential backoff with jitter (3 retries per model, then fallback)
+  - Handles: ThrottlingException, TooManyRequestsException, ServiceUnavailableException, ModelTimeoutException
+  - Base delay: 1s, max delay: 30s, formula: `min(base * 2^attempt + random(0,1), max_delay)`
+- **DynamoDB response caching**: SHA-256 hash of (model + prompt) as cache key, 24h TTL
+- **Partial result handling**: Each step isolated — failure in Step 3 doesn't block Steps 2, 4, 5
+- Lambda timeout: 120 seconds, 1024MB memory
 
 ---
 
@@ -496,7 +501,7 @@ Triggered by "RecordStructured" event:
 ### Sequence Diagram
 
 ```
-Doctor → API Gateway → Lambda → Bedrock → DynamoDB
+Doctor → CloudFront → API Gateway → Lambda → Bedrock (Nova Lite / Haiku) → DynamoDB (cache)
   │           │          │         │          │
   │           │          │         │          │
   ├─ Input ──→├─ Auth ──→├─ LLM ──→├─ Store ─→│
@@ -513,12 +518,12 @@ Doctor → API Gateway → Lambda → Bedrock → DynamoDB
 
 **Model Selection Strategy**
 
-- **Claude 3 Sonnet**: Primary model for complex clinical reasoning
+- **Amazon Nova Lite**: Primary model for cost-efficient clinical reasoning
   - Use cases: SOAP note generation, differential diagnosis, clinical reasoning
   - Context window: 200K tokens
   - Strengths: Medical knowledge, nuanced understanding, safety
 
-- **Claude 3 Haiku**: Fast model for simple tasks
+- **Claude 3 Haiku**: Fallback model (auto-failover when Nova Lite is throttled)
   - Use cases: Entity extraction, classification, simple formatting
   - Lower latency and cost
   - Suitable for real-time interactions
@@ -877,9 +882,9 @@ Evidence Level: Class I, Level A
 - Displayed in UI as expandable references
 - Linked to original source when available
 
-**Amazon Q Integration**
+**Bedrock Knowledge Bases Integration (Optional RAG)**
 
-Amazon Q Business provides an additional RAG layer:
+Bedrock Knowledge Bases provides an additional RAG layer:
 - Pre-built connectors for common data sources
 - Automatic indexing and updates
 - Natural language query interface
@@ -1331,31 +1336,35 @@ The serverless architecture provides favorable cost-scaling properties:
 
 **Low Usage (0-100 consultations/day)**
 - Lambda: ~$10/month (free tier eligible)
-- DynamoDB: ~$5/month (on-demand)
-- S3: ~$2/month
-- Bedrock: ~$50/month (primary cost)
-- Total: ~$70/month
+- DynamoDB: ~$1/month (PAY_PER_REQUEST, 25GB free tier)
+- S3 + CloudFront: ~$3/month
+- Bedrock (Nova Lite): ~$10/month
+- Transcribe Medical: ~$5/month
+- Total: ~$30/month
 
 **Medium Usage (1,000 consultations/day)**
 - Lambda: ~$100/month
-- DynamoDB: ~$50/month
-- S3: ~$20/month
-- Bedrock: ~$500/month
-- Total: ~$700/month
+- DynamoDB: ~$10/month
+- S3 + CloudFront: ~$20/month
+- Bedrock (Nova Lite): ~$100/month
+- Transcribe Medical: ~$50/month
+- Total: ~$280/month
 
 **High Usage (10,000 consultations/day)**
 - Lambda: ~$800/month
-- DynamoDB: ~$400/month
-- S3: ~$150/month
-- Bedrock: ~$4,500/month
-- Total: ~$6,000/month
+- DynamoDB: ~$80/month
+- S3 + CloudFront: ~$150/month
+- Bedrock (Nova Lite): ~$900/month
+- Transcribe Medical: ~$500/month
+- Total: ~$2,430/month
 
-**Cost Optimization Strategies**
+**Cost Optimization Strategies (Implemented)**
 
 1. **Model Selection**
-   - Use Haiku for simple tasks (10x cheaper than Sonnet)
-   - Cache common responses
-   - Batch processing where possible
+   - Amazon Nova Lite as primary model (~80% cheaper than Claude Sonnet)
+   - Claude Haiku as fallback (auto-failover only when needed)
+   - DynamoDB response caching with 24h TTL — repeat consultations are free
+   - PAY_PER_REQUEST billing — zero cost when idle
 
 2. **Storage Optimization**
    - S3 Intelligent-Tiering for automatic cost optimization
@@ -1734,20 +1743,35 @@ The use of synthetic data in the prototype phase enables safe development and te
 
 ## Appendix: AWS Service Summary
 
+### Deployed (10 Services — All via CloudFormation IaC)
+
 | Service | Purpose | Key Features |
 |---------|---------|--------------|
-| Amazon Bedrock | AI model hosting | Claude 3, Titan models, Guardrails |
-| Amazon Q | Knowledge retrieval | RAG, public guidelines, trial protocols |
-| AWS Lambda | Serverless compute | Auto-scaling, event-driven |
-| API Gateway | API management | REST, WebSocket, throttling |
-| DynamoDB | NoSQL database | Structured records, sessions, audit logs |
-| S3 | Object storage | Documents, transcripts, backups |
-| OpenSearch Serverless | Vector search | Embeddings, semantic search |
-| Transcribe Medical | Speech-to-text | Medical vocabulary, real-time |
-| Step Functions | Workflow orchestration | Parallel processing, error handling |
-| EventBridge | Event bus | Decoupling, event routing |
-| Cognito | Authentication | User management, MFA |
-| KMS | Key management | Encryption keys, rotation |
+| **Amazon Bedrock** | AI engine | Nova Lite (primary) + Claude Haiku (fallback), Converse API, retry/backoff |
+| **Bedrock Multi-Agent Collaboration** | Agent orchestration | Supervisor-Router: 1 supervisor + 4 specialist collaborator agents |
+| **AWS Lambda** (x3) | Serverless compute | Monolithic handler, Agent Invoker, Tool Executor |
+| **Amazon API Gateway** | REST API | CORS, `/api/process`, `/api/process-agent`, `/api/translate` |
+| **Amazon S3** | Static hosting + storage | Frontend files, Lambda deployment packages |
+| **Amazon CloudFront** | CDN | HTTPS, SPA error routing, cache control |
+| **Amazon DynamoDB** | Response caching | SHA-256 keys, 24h TTL, PAY_PER_REQUEST, fail-safe |
+| **Amazon Cognito** | Identity Pool | Unauthenticated access for Transcribe Medical streaming |
+| **Amazon Transcribe Medical** | Speech-to-text | Real-time streaming, PRIMARYCARE specialty, medical vocabulary |
+| **AWS CloudFormation** | Infrastructure as Code | Entire stack defined in one YAML template |
+
+### CI/CD
+
+| Tool | Purpose |
+|------|---------|
+| **GitHub Actions** | Automated deployment on push to main |
+
+### Production Roadmap
+
+| Service | Purpose | Key Features |
+|---------|---------|--------------|
+| Bedrock Knowledge Bases | RAG for trial matching | Titan Embeddings, semantic search |
+| Step Functions | Workflow orchestration | Parallel Bedrock calls, error handling |
+| HealthLake | FHIR integration | ABDM-compatible health records |
+| Bedrock Guardrails | Prompt injection protection | Content filtering, PII redaction |
 | CloudWatch | Monitoring | Logs, metrics, alarms |
 | CloudFront | CDN | Global distribution, caching |
 | VPC | Networking | Isolation, security groups |

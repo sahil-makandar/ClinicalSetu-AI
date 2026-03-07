@@ -13,13 +13,12 @@ interface Props {
 }
 
 const processingSteps = [
-  { label: 'Analyzing clinical narrative...', icon: FileText },
-  { label: 'Generating SOAP Note...', icon: Stethoscope },
-  { label: 'Creating Patient Summary...', icon: UserCheck },
-  { label: 'Drafting Referral Letter...', icon: Send },
-  { label: 'Generating Discharge Summary...', icon: FileText },
-  { label: 'Matching Clinical Trials...', icon: FlaskConical },
-  { label: 'Validating outputs...', icon: Sparkles },
+  { label: 'Supervisor receiving consultation...', icon: Sparkles },
+  { label: 'SOAPAgent: Generating SOAP Note...', icon: Stethoscope },
+  { label: 'SummaryAgent: Creating Patient Summary...', icon: UserCheck },
+  { label: 'ReferralAgent: Drafting Referral + Discharge...', icon: Send },
+  { label: 'TrialAgent: Matching Clinical Trials...', icon: FlaskConical },
+  { label: 'Supervisor assembling results...', icon: Zap },
 ];
 
 const supportedLanguages = [
@@ -345,7 +344,7 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
 
             <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-400">
               <Zap className="w-3.5 h-3.5 text-medical-400" />
-              <span>Powered by Amazon Bedrock (Nova Lite + Claude Haiku fallback)</span>
+              <span>Powered by Amazon Bedrock Multi-Agent Collaboration</span>
             </div>
           </div>
         </div>
@@ -637,27 +636,34 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
             </div>
 
             {/* AI Transparency */}
-            <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-5">
-              <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-medical-500" />
-                AI Transparency
-              </h3>
-              <div className="space-y-2.5">
-                {[
-                  { label: 'Architecture', value: 'Bedrock Converse API + Retry/Fallback' },
-                  { label: 'Model', value: 'Amazon Nova Lite (primary)' },
-                  { label: 'Fallback', value: 'Claude 3 Haiku (auto-failover)' },
-                  { label: 'Voice', value: 'Amazon Transcribe Medical (streaming)' },
-                  { label: 'Languages', value: '9 Indian languages supported' },
-                  { label: 'Caching', value: 'DynamoDB response cache (24h TTL)' },
-                  { label: 'Outputs', value: 'SOAP, Summary, Referral, Discharge, Trials' },
-                  { label: 'Data', value: 'Synthetic only (no real PHI)' },
-                ].map((item) => (
-                  <div key={item.label} className="flex items-start gap-2">
-                    <span className="text-xs font-semibold text-slate-500 w-20 shrink-0">{item.label}</span>
-                    <span className="text-xs text-slate-600">{item.value}</span>
-                  </div>
-                ))}
+            <div className="rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 bg-gradient-to-r from-indigo-50 to-violet-50 border-b border-indigo-100/60">
+                <h3 className="text-sm font-bold text-indigo-900 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-500" />
+                  AI Transparency
+                </h3>
+              </div>
+              <div className="bg-white p-4 space-y-3">
+                <div className="flex items-center gap-2 p-2.5 bg-indigo-50/50 rounded-xl border border-indigo-100/40">
+                  <Zap className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                  <span className="text-[11px] font-semibold text-indigo-800">Multi-Agent Collaboration</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { label: 'Model', value: 'Nova Lite' },
+                    { label: 'Fallback', value: 'Nova Micro' },
+                    { label: 'Voice', value: 'Transcribe Medical' },
+                    { label: 'Languages', value: '9 Indian' },
+                    { label: 'Cache', value: 'DynamoDB 24h' },
+                    { label: 'Data', value: 'Synthetic only' },
+                  ].map((item) => (
+                    <div key={item.label} className="text-center p-2 bg-slate-50 rounded-lg">
+                      <p className="text-[10px] font-medium text-slate-400 uppercase">{item.label}</p>
+                      <p className="text-[11px] font-semibold text-slate-700 mt-0.5">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-slate-400 text-center pt-1">Supervisor + 4 Specialist Agents &middot; 5 outputs from 1 input</p>
               </div>
             </div>
           </div>

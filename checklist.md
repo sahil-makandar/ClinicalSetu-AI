@@ -171,8 +171,9 @@ STEP 4: GitHub Repository          → Only if all above pass
 | Service | Purpose | Built? | Mentioned in PPT? |
 |---------|---------|:------:|:------------------:|
 | **Amazon Bedrock** (Nova Lite + Claude Haiku fallback) | Core AI engine — Converse API with retry/fallback | ✅ deployed | ✅ HIGHLIGHT |
-| **AWS Lambda** (Python 3.12) | Serverless backend, 5 chained inference calls + translation | ✅ deployed | ✅ |
-| **Amazon API Gateway** (REST) | Unified API with CORS (`/process`, `/translate`) | ✅ deployed | ✅ |
+| **Bedrock Multi-Agent Collaboration** | Supervisor-Router: 1 supervisor + 4 specialist agents | ✅ built | ✅ HIGHLIGHT |
+| **AWS Lambda** (Python 3.12, x3) | Monolithic + Agent Invoker + Tool Executor | ✅ deployed | ✅ |
+| **Amazon API Gateway** (REST) | Unified API with CORS (`/process`, `/process-agent`, `/translate`) | ✅ deployed | ✅ |
 | **Amazon S3** | Frontend hosting + Lambda code storage | ✅ deployed | ✅ |
 | **Amazon CloudFront** | CDN with HTTPS for frontend | ✅ deployed | ✅ |
 | **Amazon DynamoDB** | Response caching with 24h TTL (PAY_PER_REQUEST) | ✅ deployed | ✅ |
@@ -187,8 +188,8 @@ STEP 4: GitHub Repository          → Only if all above pass
 
 | Criterion (Weight) | How We Score High |
 |---|---|
-| **Implementation (50%)** | 9 AWS services deployed via CloudFormation IaC. Bedrock Converse API with retry/fallback (Nova Lite → Claude Haiku). DynamoDB caching. Transcribe Medical streaming. CI/CD via GitHub Actions. |
-| **Technical Depth (20%)** | Exponential backoff + jitter for throttling. Model-agnostic Converse API. Partial result handling. SHA-256 cache keys. Cognito unauthenticated identity for secure browser-to-AWS access. |
+| **Implementation (50%)** | 10 AWS services deployed via CloudFormation IaC. Bedrock Multi-Agent Collaboration (Supervisor + 4 Specialists). Converse API with retry/fallback (Nova Lite → Claude Haiku). DynamoDB caching. Transcribe Medical streaming. CI/CD via GitHub Actions. |
+| **Technical Depth (20%)** | Multi-agent orchestration with Supervisor-Router pattern. Exponential backoff + jitter. Model-agnostic Converse API. Auto-fallback from multi-agent to monolithic. SHA-256 cache keys. Cognito unauthenticated identity. |
 | **Cost Efficiency (10%)** | Amazon Nova Lite as primary model (~80% cheaper than Sonnet). DynamoDB PAY_PER_REQUEST + 24h TTL cache. Serverless everything. CloudFront caching. |
 | **Impact (10%)** | 1 doctor per 1,511 people. 500+ patients/day in govt hospitals. ABDM alignment. 9 Indian languages. Clinical trial democratization. |
 | **Completeness & Presentation (10%)** | Live URL, polished UI, rehearsed video, professional PPT, comprehensive README. |

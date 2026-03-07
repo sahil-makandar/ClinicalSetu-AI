@@ -80,7 +80,7 @@ Team Sahrova | AI for Bharat Hackathon
 
 ---
 
-## SLIDE 5: AWS ARCHITECTURE (9 Services — All Deployed)
+## SLIDE 5: AWS ARCHITECTURE (10 Services — All Deployed)
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -89,37 +89,35 @@ Team Sahrova | AI for Bharat Hackathon
 │  GitHub Actions CI/CD ──► CloudFormation (IaC)                │
 │                                                               │
 │  ┌───────────┐  ┌──────────┐  ┌──────────────┐  ┌────────┐  │
-│  │CloudFront │  │   S3     │  │ API Gateway  │  │ Lambda │  │
-│  │  (CDN)    │─►│(Frontend)│  │  (REST API)  │─►│Python  │  │
-│  │  HTTPS    │  │          │  │  + CORS      │  │3.12    │  │
+│  │CloudFront │  │   S3     │  │ API Gateway  │  │Lambda  │  │
+│  │  (CDN)    │─►│(Frontend)│  │  (REST API)  │─►│x3      │  │
+│  │  HTTPS    │  │          │  │  + CORS      │  │Python  │  │
 │  └───────────┘  └──────────┘  └──────────────┘  └───┬────┘  │
 │                                                       │       │
-│                   ┌───────────────┬───────────────────┤       │
-│                   ▼               ▼                   ▼       │
-│           ┌──────────────┐ ┌──────────┐      ┌────────────┐  │
-│           │ Amazon       │ │ DynamoDB │      │ Bedrock    │  │
-│           │ Bedrock      │ │ (Cache)  │      │ Knowledge  │  │
-│           │ Nova Lite    │ │ 24h TTL  │      │ Bases      │  │
-│           │ + Haiku      │ │ PAY/REQ  │      │ (optional) │  │
-│           │ (fallback)   │ └──────────┘      └────────────┘  │
-│           └──────────────┘                                    │
+│           ┌───────────────────────────────────────────┤       │
+│           ▼                                           ▼       │
+│  ┌─────────────────────────────────────┐      ┌──────────┐   │
+│  │ Bedrock Multi-Agent Collaboration   │      │ DynamoDB │   │
+│  │                                     │      │ (Cache)  │   │
+│  │  Supervisor Agent (Nova Lite)       │      │ 24h TTL  │   │
+│  │    ├── SOAPAgent → Tool Executor    │      └──────────┘   │
+│  │    ├── SummaryAgent → Tool Executor │                      │
+│  │    ├── ReferralAgent → Tool Executor│                      │
+│  │    └── TrialAgent → Tool Executor   │                      │
+│  └─────────────────────────────────────┘                      │
 │                                                               │
 │  Browser ──► Cognito Identity Pool ──► Transcribe Medical     │
 │              (unauthenticated)          (streaming speech)     │
-│                                                               │
-│  5 Bedrock calls per consultation (Converse API):             │
-│  SOAP → Patient Summary → Referral → Discharge → Trials      │
-│  + On-demand translation (6th call)                           │
-│  + Retry with exponential backoff + model fallback            │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**9 AWS Services — All Deployed via CloudFormation IaC:**
+**10 AWS Services — All Deployed via CloudFormation IaC:**
 | Service | Purpose |
 |---------|---------|
 | **Amazon Bedrock** (Nova Lite + Claude Haiku) | Core AI engine — Converse API with model fallback chain |
-| **AWS Lambda** (Python 3.12, 1024MB) | Serverless backend, retry/backoff, partial result handling |
-| **API Gateway** (REST) | Unified API with CORS (`/process`, `/translate`) |
+| **Bedrock Multi-Agent Collaboration** | Supervisor-Router: 1 supervisor + 4 specialist collaborator agents |
+| **AWS Lambda** (Python 3.12, x3) | Monolithic handler + Agent Invoker + Tool Executor |
+| **API Gateway** (REST) | Unified API with CORS (`/process`, `/process-agent`, `/translate`) |
 | **Amazon S3** | Frontend static hosting + Lambda deployment packages |
 | **Amazon CloudFront** | CDN with HTTPS, SPA error routing |
 | **Amazon DynamoDB** | Response caching (SHA-256 keys, 24h TTL, PAY_PER_REQUEST) |
@@ -129,40 +127,55 @@ Team Sahrova | AI for Bharat Hackathon
 
 ---
 
-## SLIDE 6: THE AI PIPELINE — How It Actually Works
+## SLIDE 6: MULTI-AGENT AI PIPELINE — How It Actually Works
 
 ```
-Doctor Input (voice/text, any language)
+Doctor Input (voice via Transcribe Medical / text, any language)
          │
          ▼
-    ┌─────────────┐
-    │ STEP 1       │  Prompt Template + Patient Context
-    │ SOAP Note    │──► Bedrock (Claude 3 Sonnet)
-    │ Generation   │  ◄── Structured JSON with confidence scores
-    └──────┬──────┘
-           │ SOAP feeds all downstream outputs
-     ┌─────┼─────┬──────────┐
-     ▼     ▼     ▼          ▼
-   Step 2  Step 3  Step 4   Step 5
-   Patient Referral Discharge Trial
-   Summary Letter  Summary   Match
-     │      │       │         │
-     │      │       │     Uses RAG via
-     │      │       │     Knowledge Bases
-     ▼      ▼       ▼         ▼
-   JSON   JSON    JSON      JSON
-   output  output  output   output
-           │
-           ▼
-    On-demand translation
-    to 9 Indian languages
+┌─────────────────────────────────────────────────────────┐
+│            SUPERVISOR AGENT (Nova Lite)                   │
+│            Coordinates the clinical pipeline              │
+│                         │                                 │
+│                    ┌────┘ Step 1: SOAP first              │
+│                    ▼                                      │
+│            ┌───────────────┐                              │
+│            │  SOAPAgent    │  Consultation → SOAP Note     │
+│            │  (Specialist) │  Converse API + retry/backoff │
+│            └──────┬────────┘                              │
+│                   │ SOAP note feeds all others            │
+│           ┌───────┼────────┬────────────┐                 │
+│           ▼       ▼        ▼            ▼                 │
+│      ┌─────────┐ ┌──────────┐ ┌───────────┐              │
+│      │Summary  │ │Referral  │ │ Trial     │              │
+│      │Agent    │ │Agent     │ │ Agent     │              │
+│      │(Patient │ │(Referral+│ │(Trial     │              │
+│      │ summary)│ │Discharge)│ │ matching) │              │
+│      └────┬────┘ └────┬─────┘ └─────┬─────┘              │
+│           ▼           ▼             ▼                     │
+│         JSON        JSON          JSON                    │
+└───────────────────────┬───────────────────────────────────┘
+                        │
+              ┌─────────┼──────────┐
+              ▼         ▼          ▼
+         ┌──────────┐ Translation  Frontend
+         │ DynamoDB │ to 9 Indian  Results
+         │ Cache    │ languages    Dashboard
+         └──────────┘
 ```
 
+**Why Multi-Agent? (Not just a buzzword)**
+Clinical documentation is inherently a **multi-specialist coordination problem**. In real hospitals, SOAP notes, patient summaries, referral letters, and trial matching are handled by different people with different expertise. A monolithic Lambda making 5 sequential calls with the same model doesn't reflect this. Bedrock Multi-Agent Collaboration does.
+
 **Key Technical Decisions:**
+- **Bedrock Multi-Agent Collaboration** — AWS-native Supervisor-Router pattern. Supervisor enforces SOAP-first ordering, then delegates to 3 specialists in parallel.
+- **Bedrock Converse API** — model-agnostic, works with Nova Lite and Claude Haiku without format changes
+- **Retry with exponential backoff + jitter** — handles Bedrock throttling gracefully (3 retries per model)
+- **Model fallback chain** — Nova Lite (primary, cost-efficient) → Claude Haiku (fallback if throttled)
+- **Multi-agent → Monolithic fallback** — If supervisor fails, auto-falls back to monolithic pipeline
+- **DynamoDB response caching** — SHA-256 hash of input → cached result (24h TTL, skips repeat calls)
 - SOAP note is the **single source of truth** — all outputs derive from it
-- Each prompt template enforces **structured JSON output** with confidence scoring
-- Trial matching uses **Retrieval Augmented Generation** via Bedrock Knowledge Bases
-- Translation preserves JSON structure — keys in English, values in target language
+- Each agent has **domain-specific instructions** and **isolated tools**
 - Every output includes an **AI disclaimer** — we never claim to diagnose
 
 ---
@@ -240,19 +253,21 @@ ClinicalSetu is **NOT a diagnostic tool**. It is a **documentation assistant**.
 
 ---
 
-## SLIDE 10: PRODUCTION ROADMAP
+## SLIDE 10: WHAT WE BUILT vs. PRODUCTION ROADMAP
 
-**What we built (prototype)** → **What we'd build with 6 more months**
+**What we built (9 AWS services, fully deployed)** → **What we'd add with 6 more months**
 
-| Prototype (Now) | Production (6-month roadmap) |
+| Built (Prototype — All Deployed) | Production (6-month roadmap) |
 |---|---|
-| Web Speech API for voice | **AWS Transcribe Medical** with medical vocabulary |
-| 9 Indian languages | **22 languages** + dialect support |
-| Synthetic trial data in S3 | **CTRI + ClinicalTrials.gov** live feed via Knowledge Bases |
-| Mock authentication | **Amazon Cognito** with ABHA ID integration |
-| Single Lambda | **Step Functions** orchestrating parallel Bedrock calls |
-| In-memory processing | **DynamoDB** for visit history + **ElastiCache** for response caching |
-| Frontend-only patient portal | **Full patient app** with appointment booking + medication reminders |
+| **Amazon Transcribe Medical** streaming | **AWS HealthScribe** for speaker diarization |
+| **9 Indian languages** via Bedrock translation | **22 languages** + dialect support |
+| **DynamoDB response caching** (24h TTL) | **DynamoDB** for visit history + patient records |
+| **Cognito Identity Pool** (Transcribe access) | **Cognito User Pools** with ABHA ID / ABDM integration |
+| **CloudFormation IaC** + GitHub Actions CI/CD | **Step Functions** for complex workflow orchestration |
+| **Bedrock Multi-Agent Collaboration** (Supervisor + 4 Specialists) | **Bedrock Guardrails** for prompt injection + PII filtering |
+| **Nova Lite + Haiku** model fallback chain | **Bedrock Knowledge Bases** (RAG) for live trial data |
+| Synthetic trial data | **CTRI + ClinicalTrials.gov** live feed via Knowledge Bases |
+| Frontend-only patient portal | **Full patient app** with appointment booking + reminders |
 | Manual approval workflow | **EventBridge** audit trail + **CloudTrail** compliance logging |
 
 **Business model:** SaaS for hospital chains (B2B). Per-consultation pricing.
@@ -308,8 +323,11 @@ We just handle the paperwork.
 - "Every output has a confidence score. The doctor sees exactly how certain the AI is."
 
 ## What Judges Will Ask (Prepare Answers)
-1. **"How is this different from ChatGPT?"** → "Three things: structured JSON output (not free text), confidence scoring on every field, and RAG-based trial matching. ChatGPT can't do retrieval over your clinical trial database."
-2. **"What about data privacy?"** → "Prototype uses synthetic data only. Production would use Cognito auth + DynamoDB encryption at rest + VPC-isolated Lambda. We designed with ABDM compliance in mind."
-3. **"Does the voice input actually work in Hindi?"** → "Yes. We use the Web Speech API with auto-detection. For production, we'd migrate to AWS Transcribe Medical which has dedicated Indian English and Hindi models."
+1. **"How is this different from ChatGPT?"** → "Three things: structured JSON output (not free text), confidence scoring on every field, and RAG-based trial matching. Plus we use Amazon Transcribe Medical for clinical speech-to-text — ChatGPT can't stream medical audio."
+2. **"What about data privacy?"** → "Prototype uses synthetic data only. We use Cognito Identity Pools for secure browser-to-AWS access. DynamoDB encryption at rest is default. All infra is deployed via CloudFormation IaC. We designed with ABDM compliance in mind."
+3. **"Does the voice input actually work?"** → "Yes. We use Amazon Transcribe Medical with real-time streaming — it has a medical vocabulary optimized for clinical terminology. Audio streams from the browser via Cognito-authenticated WebSocket directly to AWS, no intermediary servers."
 4. **"How accurate is the SOAP note?"** → "We include confidence scores per section. In our testing with synthetic data, the structured outputs are medically plausible but we explicitly state this requires clinician validation. We're a documentation assistant, not a clinical decision tool."
-5. **"What's your cost per consultation?"** → "With Claude 3 Sonnet on Bedrock: approximately $0.02-0.05 per consultation (5 inference calls). At scale with Haiku for simpler outputs, under $0.01."
+5. **"What's your cost per consultation?"** → "With Amazon Nova Lite as primary model: approximately $0.003-0.01 per consultation (5 inference calls). That's ~80% cheaper than Claude Sonnet. Plus DynamoDB caching means repeat consultations are free. Transcribe Medical adds ~$0.05/min of audio."
+6. **"How do you handle Bedrock throttling?"** → "We implemented exponential backoff with jitter (3 retries per model) plus automatic model fallback — if Nova Lite is throttled, we seamlessly switch to Claude Haiku. Each processing step is isolated so one failure returns partial results, not a total failure."
+7. **"Why multi-agent instead of a single Lambda?"** → "Clinical documentation is inherently a multi-specialist problem. In real hospitals, SOAP notes, summaries, referrals, and trial matching are handled by different people with different expertise. Our supervisor agent mirrors a lead physician coordinating specialists. Each agent has domain-specific instructions — the SOAP agent focuses on clinical reasoning, the summary agent on health literacy, the trial agent on research methodology. This is architecturally correct, not just a pattern we bolted on."
+8. **"What happens if the multi-agent system fails?"** → "We have automatic fallback. If the supervisor or any collaborator fails, the invoker Lambda catches the error and routes to our monolithic pipeline — the same battle-tested handler that runs 5 sequential Bedrock calls. The frontend shows which path was used. This gives us reliability AND the architectural innovation."

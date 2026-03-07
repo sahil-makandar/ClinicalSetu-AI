@@ -6,7 +6,7 @@ Discharge Summary, Trial Matching).
 
 Features:
 - Retry with exponential backoff for Bedrock throttling
-- Fallback to secondary model if primary model fails (Nova Lite -> Haiku)
+- Fallback to secondary model if primary model fails (Nova Lite -> Nova Micro)
 - DynamoDB caching to reduce costs and improve latency
 - Partial result handling (returns completed steps even if later steps fail)
 """
@@ -36,9 +36,9 @@ CACHE_TABLE = os.environ.get("DYNAMODB_CACHE_TABLE", "ClinicalSetu-Cache")
 CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() == "true"
 dynamodb = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
-# Configuration - Primary: Amazon Nova Lite (cost-efficient), Fallback: Claude Haiku
+# Configuration - Primary: Amazon Nova Lite (cost-efficient), Fallback: Nova Micro
 MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.amazon.nova-lite-v1:0")
-FALLBACK_MODEL_ID = os.environ.get("BEDROCK_FALLBACK_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+FALLBACK_MODEL_ID = os.environ.get("BEDROCK_FALLBACK_MODEL_ID", "us.amazon.nova-micro-v1:0")
 KNOWLEDGE_BASE_ID = os.environ.get("KNOWLEDGE_BASE_ID", "")
 MAX_TOKENS = 4096
 TEMPERATURE = 0.3

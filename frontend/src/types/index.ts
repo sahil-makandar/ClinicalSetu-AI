@@ -234,5 +234,7 @@ export interface ProcessingResult {
     agent_alias_id?: string;
     session_id?: string;
     tools_called?: number;
+    agents_invoked?: number;
+    fallback_reason?: string;
   };
 }

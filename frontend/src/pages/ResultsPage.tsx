@@ -221,6 +221,12 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
                 <p className="text-xs text-slate-500">{doctor.name} &middot; {consultation.id}</p>
               </div>
             </div>
+            {result.metadata?.architecture?.includes('Multi-Agent') && (
+              <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-full bg-gradient-to-r from-violet-100 to-indigo-100 text-indigo-700 border border-indigo-200/60">
+                <Sparkles className="w-3 h-3" />
+                Multi-Agent AI
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2.5">
             <button
