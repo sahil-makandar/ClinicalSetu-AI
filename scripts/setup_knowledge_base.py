@@ -6,6 +6,15 @@ Architecture:
   S3 (trial JSONs) -> Titan Embeddings v2 -> OpenSearch Serverless -> Bedrock KB
   TrialAgent -> retrieve_and_generate() API -> KB
 
+Steps:
+  1. Create S3 bucket for trial data
+  2. Upload trial data to S3
+  3. Create IAM role for KB
+  4. Create OpenSearch Serverless collection + security policies + vector index
+  5. Create Bedrock Knowledge Base pointing to AOSS collection
+  6. Create S3 data source
+  7. Start initial data sync
+
 Prerequisites:
   - AWS CLI configured with credentials
   - Region: us-east-1
@@ -31,11 +40,14 @@ KB_NAME = "ClinicalSetu-TrialKB"
 KB_DESCRIPTION = "Clinical trial data for patient-trial matching RAG"
 EMBEDDING_MODEL = "amazon.titan-embed-text-v2:0"
 EMBEDDING_MODEL_ARN = f"arn:aws:bedrock:{REGION}::foundation-model/{EMBEDDING_MODEL}"
+AOSS_COLLECTION_NAME = "clinicalsetu-trials"
+AOSS_INDEX_NAME = "clinicalsetu-trials-index"
 
 sts = boto3.client("sts", region_name=REGION)
 iam = boto3.client("iam", region_name=REGION)
 s3 = boto3.client("s3", region_name=REGION)
 bedrock_agent = boto3.client("bedrock-agent", region_name=REGION)
+aoss = boto3.client("opensearchserverless", region_name=REGION)
 
 ACCOUNT_ID = sts.get_caller_identity()["Account"]
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -156,6 +168,296 @@ def get_or_create_kb_role():
     return role_arn
 
 
+def create_aoss_security_policies(role_arn):
+    """Create OpenSearch Serverless encryption, network, and data access policies."""
+
+    # 1. Encryption policy (required before collection creation)
+    enc_policy_name = "clinicalsetu-enc"
+    try:
+        aoss.create_security_policy(
+            name=enc_policy_name,
+            type="encryption",
+            policy=json.dumps({
+                "Rules": [
+                    {
+                        "ResourceType": "collection",
+                        "Resource": [f"collection/{AOSS_COLLECTION_NAME}"],
+                    }
+                ],
+                "AWSOwnedKey": True,
+            }),
+        )
+        print(f"  Created encryption policy: {enc_policy_name}")
+    except Exception as e:
+        if "Conflict" in str(e):
+            print(f"  Encryption policy exists: {enc_policy_name}")
+        else:
+            raise
+
+    # 2. Network policy (allow public access for simplicity in hackathon)
+    net_policy_name = "clinicalsetu-net"
+    try:
+        aoss.create_security_policy(
+            name=net_policy_name,
+            type="network",
+            policy=json.dumps([
+                {
+                    "Rules": [
+                        {
+                            "ResourceType": "collection",
+                            "Resource": [f"collection/{AOSS_COLLECTION_NAME}"],
+                        },
+                        {
+                            "ResourceType": "dashboard",
+                            "Resource": [f"collection/{AOSS_COLLECTION_NAME}"],
+                        },
+                    ],
+                    "AllowFromPublic": True,
+                }
+            ]),
+        )
+        print(f"  Created network policy: {net_policy_name}")
+    except Exception as e:
+        if "Conflict" in str(e):
+            print(f"  Network policy exists: {net_policy_name}")
+        else:
+            raise
+
+    # 3. Data access policy (allow KB role + current caller to read/write)
+    caller_arn = sts.get_caller_identity()["Arn"]
+    data_policy_name = "clinicalsetu-data"
+    try:
+        aoss.create_access_policy(
+            name=data_policy_name,
+            type="data",
+            policy=json.dumps([
+                {
+                    "Rules": [
+                        {
+                            "ResourceType": "collection",
+                            "Resource": [f"collection/{AOSS_COLLECTION_NAME}"],
+                            "Permission": [
+                                "aoss:CreateCollectionItems",
+                                "aoss:DeleteCollectionItems",
+                                "aoss:UpdateCollectionItems",
+                                "aoss:DescribeCollectionItems",
+                            ],
+                        },
+                        {
+                            "ResourceType": "index",
+                            "Resource": [f"index/{AOSS_COLLECTION_NAME}/*"],
+                            "Permission": [
+                                "aoss:CreateIndex",
+                                "aoss:DeleteIndex",
+                                "aoss:UpdateIndex",
+                                "aoss:DescribeIndex",
+                                "aoss:ReadDocument",
+                                "aoss:WriteDocument",
+                            ],
+                        },
+                    ],
+                    "Principal": [role_arn, caller_arn],
+                }
+            ]),
+        )
+        print(f"  Created data access policy: {data_policy_name}")
+    except Exception as e:
+        if "Conflict" in str(e):
+            print(f"  Data access policy exists: {data_policy_name}")
+        else:
+            raise
+
+
+def get_or_create_aoss_collection():
+    """Create OpenSearch Serverless collection for vector storage."""
+    # Check if collection already exists
+    try:
+        response = aoss.batch_get_collection(names=[AOSS_COLLECTION_NAME])
+        details = response.get("collectionDetails", [])
+        if details:
+            collection = details[0]
+            collection_id = collection["id"]
+            collection_arn = collection["arn"]
+            print(f"  Collection exists: {AOSS_COLLECTION_NAME} ({collection_id})")
+            # Wait for ACTIVE status
+            for _ in range(30):
+                resp = aoss.batch_get_collection(ids=[collection_id])
+                status = resp["collectionDetails"][0]["status"]
+                if status == "ACTIVE":
+                    endpoint = resp["collectionDetails"][0].get("collectionEndpoint", "")
+                    return collection_arn, endpoint
+                print(f"  Collection status: {status}...")
+                time.sleep(10)
+            endpoint = collection.get("collectionEndpoint", "")
+            return collection_arn, endpoint
+    except Exception:
+        pass
+
+    # Create new collection
+    response = aoss.create_collection(
+        name=AOSS_COLLECTION_NAME,
+        type="VECTORSEARCH",
+        description="ClinicalSetu clinical trial vector store for RAG",
+    )
+    collection_id = response["createCollectionDetail"]["id"]
+    collection_arn = response["createCollectionDetail"]["arn"]
+    print(f"  Created collection: {AOSS_COLLECTION_NAME} ({collection_id})")
+
+    # Wait for collection to become ACTIVE
+    endpoint = ""
+    for attempt in range(60):
+        resp = aoss.batch_get_collection(ids=[collection_id])
+        details = resp["collectionDetails"][0]
+        status = details["status"]
+        if status == "ACTIVE":
+            endpoint = details.get("collectionEndpoint", "")
+            print(f"  Collection ACTIVE: {endpoint}")
+            break
+        elif status == "FAILED":
+            raise Exception(f"Collection creation failed")
+        if attempt % 6 == 0:
+            print(f"  Collection status: {status} (waiting...)")
+        time.sleep(10)
+
+    return collection_arn, endpoint
+
+
+def create_vector_index(endpoint):
+    """Create the vector index in OpenSearch Serverless collection."""
+    if not endpoint:
+        print("  WARNING: No endpoint available, skipping index creation")
+        return
+
+    # Use opensearch-py if available, otherwise use urllib
+    try:
+        from opensearchpy import OpenSearch, RequestsHttpConnection
+        from requests_aws4auth import AWS4Auth
+
+        credentials = boto3.Session().get_credentials()
+        awsauth = AWS4Auth(
+            credentials.access_key,
+            credentials.secret_key,
+            REGION,
+            "aoss",
+            session_token=credentials.token,
+        )
+
+        host = endpoint.replace("https://", "")
+        client = OpenSearch(
+            hosts=[{"host": host, "port": 443}],
+            http_auth=awsauth,
+            use_ssl=True,
+            verify_certs=True,
+            connection_class=RequestsHttpConnection,
+            timeout=300,
+        )
+
+        # Check if index exists
+        if client.indices.exists(index=AOSS_INDEX_NAME):
+            print(f"  Index exists: {AOSS_INDEX_NAME}")
+            return
+
+        # Create vector index
+        index_body = {
+            "settings": {
+                "index": {
+                    "knn": True,
+                }
+            },
+            "mappings": {
+                "properties": {
+                    "embedding": {
+                        "type": "knn_vector",
+                        "dimension": 1024,
+                        "method": {
+                            "engine": "faiss",
+                            "name": "hnsw",
+                            "space_type": "l2",
+                        },
+                    },
+                    "text": {"type": "text"},
+                    "metadata": {"type": "text"},
+                }
+            },
+        }
+
+        client.indices.create(index=AOSS_INDEX_NAME, body=index_body)
+        print(f"  Created vector index: {AOSS_INDEX_NAME}")
+
+    except ImportError:
+        # Fall back to urllib-based index creation
+        import urllib.request
+        import urllib.error
+
+        print("  opensearch-py not available, creating index via HTTP...")
+
+        # Use SigV4 signing via botocore
+        from botocore.auth import SigV4Auth
+        from botocore.awsrequest import AWSRequest
+
+        session = boto3.Session()
+        credentials = session.get_credentials().get_frozen_credentials()
+
+        index_body = json.dumps({
+            "settings": {
+                "index": {"knn": True}
+            },
+            "mappings": {
+                "properties": {
+                    "embedding": {
+                        "type": "knn_vector",
+                        "dimension": 1024,
+                        "method": {
+                            "engine": "faiss",
+                            "name": "hnsw",
+                            "space_type": "l2",
+                        },
+                    },
+                    "text": {"type": "text"},
+                    "metadata": {"type": "text"},
+                }
+            },
+        })
+
+        url = f"{endpoint}/{AOSS_INDEX_NAME}"
+
+        # Check if index exists
+        try:
+            check_req = AWSRequest(method="HEAD", url=url, headers={"Host": endpoint.replace("https://", "")})
+            SigV4Auth(credentials, "aoss", REGION).add_auth(check_req)
+            req = urllib.request.Request(url, method="HEAD", headers=dict(check_req.headers))
+            urllib.request.urlopen(req)
+            print(f"  Index exists: {AOSS_INDEX_NAME}")
+            return
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                print(f"  Index check error: {e}")
+
+        # Create index
+        try:
+            aws_req = AWSRequest(
+                method="PUT",
+                url=url,
+                data=index_body,
+                headers={
+                    "Host": endpoint.replace("https://", ""),
+                    "Content-Type": "application/json",
+                },
+            )
+            SigV4Auth(credentials, "aoss", REGION).add_auth(aws_req)
+            req = urllib.request.Request(
+                url,
+                data=index_body.encode("utf-8"),
+                method="PUT",
+                headers=dict(aws_req.headers),
+            )
+            urllib.request.urlopen(req)
+            print(f"  Created vector index: {AOSS_INDEX_NAME}")
+        except Exception as e:
+            print(f"  Index creation error (non-fatal): {e}")
+            print("  The index will be auto-created by Bedrock KB on first sync.")
+
+
 def find_existing_kb():
     """Check if Knowledge Base already exists."""
     try:
@@ -169,7 +471,7 @@ def find_existing_kb():
     return None
 
 
-def create_knowledge_base(role_arn):
+def create_knowledge_base(role_arn, collection_arn):
     """Create Bedrock Knowledge Base with OpenSearch Serverless vector store."""
     existing_id = find_existing_kb()
     if existing_id:
@@ -194,8 +496,8 @@ def create_knowledge_base(role_arn):
         storageConfiguration={
             "type": "OPENSEARCH_SERVERLESS",
             "opensearchServerlessConfiguration": {
-                "collectionArn": "auto",
-                "vectorIndexName": "clinicalsetu-trials",
+                "collectionArn": collection_arn,
+                "vectorIndexName": AOSS_INDEX_NAME,
                 "fieldMapping": {
                     "vectorField": "embedding",
                     "textField": "text",
@@ -305,11 +607,11 @@ def main():
     print("=" * 60)
 
     # Step 1: Create S3 bucket
-    print("\n[1/6] Creating S3 bucket for trial data...")
+    print("\n[1/8] Creating S3 bucket for trial data...")
     create_trials_bucket()
 
     # Step 2: Upload trial data
-    print("\n[2/6] Uploading trial data to S3...")
+    print("\n[2/8] Uploading trial data to S3...")
     count = upload_trial_data()
     if count == 0:
         print("  No trial data to upload. Running fetch_trials.py --local first...")
@@ -319,19 +621,28 @@ def main():
         count = upload_trial_data()
 
     # Step 3: Create IAM role
-    print("\n[3/6] Setting up IAM role...")
+    print("\n[3/8] Setting up IAM role...")
     role_arn = get_or_create_kb_role()
 
-    # Step 4: Create Knowledge Base
-    print("\n[4/6] Creating Bedrock Knowledge Base...")
-    kb_id = create_knowledge_base(role_arn)
+    # Step 4: Create AOSS security policies
+    print("\n[4/8] Creating OpenSearch Serverless security policies...")
+    create_aoss_security_policies(role_arn)
 
-    # Step 5: Create data source
-    print("\n[5/6] Creating S3 data source...")
+    # Step 5: Create AOSS collection
+    print("\n[5/8] Creating OpenSearch Serverless collection...")
+    collection_arn, endpoint = get_or_create_aoss_collection()
+
+    # Step 6: Create vector index
+    print("\n[6/8] Creating vector index...")
+    create_vector_index(endpoint)
+
+    # Step 7: Create Knowledge Base
+    print("\n[7/8] Creating Bedrock Knowledge Base...")
+    kb_id = create_knowledge_base(role_arn, collection_arn)
+
+    # Step 8: Create data source + sync
+    print("\n[8/8] Creating S3 data source and starting sync...")
     ds_id = create_data_source(kb_id)
-
-    # Step 6: Start initial sync
-    print("\n[6/6] Starting initial data sync...")
     start_sync(kb_id, ds_id)
 
     # Output

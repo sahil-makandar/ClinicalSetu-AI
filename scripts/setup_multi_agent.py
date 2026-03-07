@@ -175,6 +175,14 @@ def create_agent_with_tools(agent_name, instruction, description, tool_lambda_ar
     agent_id = response["agent"]["agentId"]
     print(f"  Created agent: {agent_name} ({agent_id})")
 
+    # Wait for agent to leave Creating state before adding action group
+    for attempt in range(30):
+        agent_status = bedrock_agent.get_agent(agentId=agent_id)["agent"]["agentStatus"]
+        if agent_status != "CREATING":
+            print(f"  Agent status: {agent_status}")
+            break
+        time.sleep(3)
+
     # Create action group with the agent's tools
     bedrock_agent.create_agent_action_group(
         agentId=agent_id,
@@ -198,7 +206,7 @@ def create_agent_with_tools(agent_name, instruction, description, tool_lambda_ar
             SourceArn=f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:agent/{agent_id}"
         )
     except Exception as e:
-        if "ResourceConflictException" in str(type(e)):
+        if "Conflict" in str(e) or "ResourceConflictException" in str(type(e)):
             pass  # Permission already exists
         else:
             print(f"  Warning: Lambda permission: {e}")
@@ -245,17 +253,31 @@ def create_agent_alias(agent_id, agent_name):
 
         return alias_id, alias_arn
     except Exception as e:
-        if "ConflictException" in str(type(e)):
+        if "Conflict" in str(e) or "ConflictException" in str(type(e)):
             aliases = bedrock_agent.list_agent_aliases(agentId=agent_id)
             for a in aliases.get("agentAliasSummaries", []):
                 if a["agentAliasName"] == "prod":
+                    alias_id = a["agentAliasId"]
                     # Update alias to point to latest version
-                    bedrock_agent.update_agent_alias(
+                    update_resp = bedrock_agent.update_agent_alias(
                         agentId=agent_id,
-                        agentAliasId=a["agentAliasId"],
+                        agentAliasId=alias_id,
                         agentAliasName="prod"
                     )
-                    return a["agentAliasId"], a.get("agentAliasArn", "")
+                    alias_arn = update_resp.get("agentAlias", {}).get("agentAliasArn", "")
+                    if not alias_arn:
+                        # Construct ARN manually
+                        alias_arn = f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:agent-alias/{agent_id}/{alias_id}"
+                    print(f"  Alias updated for {agent_name}: {alias_id}")
+                    # Wait for alias update
+                    for _ in range(20):
+                        alias_status = bedrock_agent.get_agent_alias(
+                            agentId=agent_id, agentAliasId=alias_id
+                        )["agentAlias"]["agentAliasStatus"]
+                        if alias_status == "PREPARED":
+                            break
+                        time.sleep(3)
+                    return alias_id, alias_arn
         raise
 
 
@@ -492,7 +514,7 @@ def main():
             )
             print(f"  Associated: {agent_name}")
         except Exception as e:
-            if "ConflictException" in str(type(e)):
+            if "Conflict" in str(e) or "ConflictException" in str(type(e)):
                 print(f"  Already associated: {agent_name}")
             else:
                 print(f"  Error associating {agent_name}: {e}")

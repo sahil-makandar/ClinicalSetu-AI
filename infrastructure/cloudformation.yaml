@@ -367,14 +367,6 @@ Resources:
       ParentId: !GetAtt ApiGateway.RootResourceId
       PathPart: api
 
-  # /api/process resource
-  ApiResourceProcess:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref ApiGateway
-      ParentId: !Ref ApiResourceApi
-      PathPart: process
-
   # /api/process-agent resource (multi-agent path)
   ApiResourceProcessAgent:
     Type: AWS::ApiGateway::Resource
@@ -440,46 +432,6 @@ Resources:
       ParentId: !Ref ApiResourceApi
       PathPart: translate
 
-  # POST /api/process - Lambda integration
-  ApiMethodProcess:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref ApiGateway
-      ResourceId: !Ref ApiResourceProcess
-      HttpMethod: POST
-      AuthorizationType: NONE
-      Integration:
-        Type: AWS_PROXY
-        IntegrationHttpMethod: POST
-        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ProcessConsultationFunction.Arn}/invocations'
-
-  # OPTIONS /api/process - CORS preflight
-  ApiMethodProcessOptions:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      RestApiId: !Ref ApiGateway
-      ResourceId: !Ref ApiResourceProcess
-      HttpMethod: OPTIONS
-      AuthorizationType: NONE
-      Integration:
-        Type: MOCK
-        RequestTemplates:
-          application/json: '{"statusCode": 200}'
-        IntegrationResponses:
-          - StatusCode: '200'
-            ResponseParameters:
-              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
-              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
-              method.response.header.Access-Control-Allow-Origin: "'*'"
-            ResponseTemplates:
-              application/json: ''
-      MethodResponses:
-        - StatusCode: '200'
-          ResponseParameters:
-            method.response.header.Access-Control-Allow-Headers: true
-            method.response.header.Access-Control-Allow-Methods: true
-            method.response.header.Access-Control-Allow-Origin: true
-
   # POST /api/translate - Lambda integration
   ApiMethodTranslate:
     Type: AWS::ApiGateway::Method
@@ -533,8 +485,6 @@ Resources:
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
-      - ApiMethodProcess
-      - ApiMethodProcessOptions
       - ApiMethodProcessAgent
       - ApiMethodProcessAgentOptions
       - ApiMethodTranslate
@@ -672,10 +622,6 @@ Outputs:
     Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}'
     Export:
       Name: !Sub '${ProjectName}-ApiUrl-${Stage}'
-
-  ApiProcessEndpoint:
-    Description: Full URL for the /api/process endpoint
-    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/api/process'
 
   ApiTranslateEndpoint:
     Description: Full URL for the /api/translate endpoint
