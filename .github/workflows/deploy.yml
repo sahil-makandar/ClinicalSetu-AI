@@ -28,7 +28,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ----- Python (for Lambda packaging) -----
+      # ----- Python (for Lambda packaging + scripts) -----
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -45,11 +45,19 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      # ----- Step 1: Package Lambda -----
+      # ----- Step 1: Fetch Clinical Trial Data (before packaging) -----
+      - name: Fetch clinical trial data from ClinicalTrials.gov
+        run: |
+          python backend/lambda/fetch_trials.py --local --test
+          python backend/lambda/fetch_trials.py --local
+          TRIAL_COUNT=$(ls data/trials/*.json 2>/dev/null | wc -l)
+          echo "Trials fetched: $TRIAL_COUNT"
+
+      # ----- Step 2: Package Lambda -----
       - name: Package Lambda functions
         run: python scripts/package_lambda.py
 
-      # ----- Step 2: Upload Lambda ZIPs to S3 -----
+      # ----- Step 3: Upload Lambda ZIPs to S3 -----
       - name: Get AWS Account ID
         id: account
         run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_OUTPUT
@@ -66,7 +74,7 @@ jobs:
           aws s3 cp lambda_deployment.zip "s3://${{ env.LAMBDA_BUCKET }}/lambda_deployment.zip"
           aws s3 cp agent_lambda_deployment.zip "s3://${{ env.LAMBDA_BUCKET }}/agent_lambda_deployment.zip"
 
-      # ----- Step 3: Deploy CloudFormation -----
+      # ----- Step 4: Deploy CloudFormation -----
       - name: Deploy CloudFormation stack
         run: |
           aws cloudformation deploy \
@@ -82,11 +90,14 @@ jobs:
               AgentLambdaS3Key=agent_lambda_deployment.zip \
               BedrockModelId="us.amazon.nova-lite-v1:0" \
               FallbackModelId="us.amazon.nova-micro-v1:0" \
-              BedrockAgentId=${{ vars.BEDROCK_AGENT_ID || '' }} \
-              BedrockAgentAliasId=${{ vars.BEDROCK_AGENT_ALIAS_ID || '' }} \
+              BedrockAgentId="${{ vars.BEDROCK_AGENT_ID || '' }}" \
+              BedrockAgentAliasId="${{ vars.BEDROCK_AGENT_ALIAS_ID || '' }}" \
+              KnowledgeBaseId="${{ vars.KNOWLEDGE_BASE_ID || '' }}" \
+              TrialsBucket="${{ vars.TRIALS_BUCKET || '' }}" \
+              DataSourceId="${{ vars.DATA_SOURCE_ID || '' }}" \
             --no-fail-on-empty-changeset
 
-      # ----- Step 3.5: Setup Multi-Agent (one-time, idempotent) -----
+      # ----- Step 4.5: Setup Multi-Agent (one-time, idempotent) -----
       - name: Setup Bedrock Multi-Agent Collaboration
         if: vars.MULTI_AGENT_SETUP_DONE != 'true'
         run: |
@@ -124,7 +135,43 @@ jobs:
             echo "WARNING: Could not extract agent IDs. Check setup script output above."
           fi
 
-      # ----- Step 4: Get Stack Outputs -----
+      # ----- Step 4.6: Setup Bedrock Knowledge Base for RAG (one-time) -----
+      - name: Setup Bedrock Knowledge Base for RAG
+        if: vars.KNOWLEDGE_BASE_SETUP_DONE != 'true'
+        run: |
+          python scripts/setup_knowledge_base.py 2>&1 | tee /tmp/kb_setup.log
+
+          KB_ID=$(grep "KNOWLEDGE_BASE_ID=" /tmp/kb_setup.log | tail -1 | cut -d= -f2)
+          TRIALS_BUCKET=$(grep "TRIALS_BUCKET=" /tmp/kb_setup.log | tail -1 | cut -d= -f2)
+          DS_ID=$(grep "DATA_SOURCE_ID=" /tmp/kb_setup.log | tail -1 | cut -d= -f2)
+
+          echo "Knowledge Base ID: $KB_ID"
+          echo "Trials Bucket: $TRIALS_BUCKET"
+          echo "Data Source ID: $DS_ID"
+
+          if [ -n "$KB_ID" ]; then
+            # Update Tool Executor Lambda with KB ID
+            TOOL_EXECUTOR_NAME="${{ env.PROJECT_NAME }}-tool-executor-${{ env.STAGE }}"
+            aws lambda update-function-configuration \
+              --function-name "$TOOL_EXECUTOR_NAME" \
+              --environment "Variables={AWS_REGION_NAME=${{ env.AWS_REGION }},BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0,BEDROCK_FALLBACK_MODEL_ID=us.amazon.nova-micro-v1:0,KNOWLEDGE_BASE_ID=$KB_ID}" \
+              --no-cli-pager
+
+            # Update Trial Fetcher Lambda with KB + bucket info
+            FETCHER_NAME="${{ env.PROJECT_NAME }}-trial-fetcher-${{ env.STAGE }}"
+            aws lambda update-function-configuration \
+              --function-name "$FETCHER_NAME" \
+              --environment "Variables={AWS_REGION_NAME=${{ env.AWS_REGION }},TRIALS_BUCKET=$TRIALS_BUCKET,KNOWLEDGE_BASE_ID=$KB_ID,DATA_SOURCE_ID=$DS_ID}" \
+              --no-cli-pager 2>/dev/null || echo "Trial Fetcher Lambda not yet deployed (will be on next deploy)"
+
+            echo "KB_ID=$KB_ID" >> $GITHUB_ENV
+            echo "TRIALS_BUCKET_NAME=$TRIALS_BUCKET" >> $GITHUB_ENV
+            echo "Knowledge Base setup complete! Set KNOWLEDGE_BASE_SETUP_DONE=true in repo variables to skip next time."
+          else
+            echo "WARNING: Could not extract KB ID. Check setup script output above."
+          fi
+
+      # ----- Step 5: Get Stack Outputs -----
       - name: Get stack outputs
         id: stack
         run: |
@@ -149,7 +196,7 @@ jobs:
           echo "cloudfront_url=$CLOUDFRONT_URL" >> $GITHUB_OUTPUT
           echo "cognito_pool_id=$COGNITO_POOL_ID" >> $GITHUB_OUTPUT
 
-      # ----- Step 5: Build Frontend -----
+      # ----- Step 6: Build Frontend -----
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -162,7 +209,7 @@ jobs:
           VITE_AWS_REGION: ${{ env.AWS_REGION }}
         run: npm run build
 
-      # ----- Step 6: Deploy Frontend to S3 -----
+      # ----- Step 7: Deploy Frontend to S3 -----
       - name: Sync frontend to S3
         working-directory: frontend
         run: |
@@ -173,7 +220,7 @@ jobs:
           aws s3 cp dist/index.html "s3://${{ steps.stack.outputs.frontend_bucket }}/index.html" \
             --cache-control "no-cache, no-store, must-revalidate"
 
-      # ----- Step 7: Invalidate CloudFront cache -----
+      # ----- Step 8: Invalidate CloudFront cache -----
       - name: Get CloudFront Distribution ID
         id: cf
         run: |
@@ -201,13 +248,15 @@ jobs:
           echo "| API (multi-agent) | ${{ steps.stack.outputs.api_url }}/api/process-agent |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### AWS Services Deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- Lambda x3 (Python 3.12) - Monolithic + Agent Invoker + Tool Executor" >> $GITHUB_STEP_SUMMARY
+          echo "- Lambda x4 (Python 3.12) - Monolithic + Agent Invoker + Tool Executor + Trial Fetcher" >> $GITHUB_STEP_SUMMARY
           echo "- API Gateway (REST) - HTTPS endpoint" >> $GITHUB_STEP_SUMMARY
-          echo "- S3 - Frontend hosting + Lambda code" >> $GITHUB_STEP_SUMMARY
+          echo "- S3 - Frontend hosting + Lambda code + Clinical trial data" >> $GITHUB_STEP_SUMMARY
           echo "- CloudFront - CDN with HTTPS" >> $GITHUB_STEP_SUMMARY
           echo "- DynamoDB - Response caching" >> $GITHUB_STEP_SUMMARY
           echo "- Amazon Bedrock - Nova Lite (primary) + Nova Micro (fallback)" >> $GITHUB_STEP_SUMMARY
           echo "- Bedrock Multi-Agent Collaboration - Supervisor + 4 Specialists" >> $GITHUB_STEP_SUMMARY
+          echo "- Bedrock Knowledge Base - RAG for clinical trial matching (Titan Embeddings v2 + OpenSearch Serverless)" >> $GITHUB_STEP_SUMMARY
+          echo "- EventBridge - Daily clinical trial data refresh from ClinicalTrials.gov" >> $GITHUB_STEP_SUMMARY
           echo "- Cognito Identity Pool - Transcribe Medical access" >> $GITHUB_STEP_SUMMARY
           echo "- Amazon Transcribe Medical - Clinical speech-to-text" >> $GITHUB_STEP_SUMMARY
           echo "- CloudFormation - Infrastructure as Code" >> $GITHUB_STEP_SUMMARY

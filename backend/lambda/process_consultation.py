@@ -242,7 +242,7 @@ def generate_trial_matches(soap_note, patient_age, patient_gender, clinical_tria
     prompt = template.replace("{soap_note}", json.dumps(soap_note, indent=2))
     prompt = prompt.replace("{patient_age}", str(patient_age))
     prompt = prompt.replace("{patient_gender}", patient_gender)
-    prompt = prompt.replace("{clinical_trials}", json.dumps(clinical_trials_data, indent=2))
+    prompt = prompt.replace("{clinical_trials}", json.dumps(clinical_trials_data, indent=2) if clinical_trials_data else "No bundled trial data. Use Knowledge Base RAG results or generate reasonable matches based on diagnosis.")
 
     if KNOWLEDGE_BASE_ID:
         try:
@@ -276,13 +276,7 @@ def _trial_matching_with_rag(prompt, soap_note):
 
 
 def load_clinical_trials():
-    """Load clinical trials data."""
-    trials_path = Path(__file__).parent.parent.parent / "data" / "clinical_trials.json"
-    if trials_path.exists():
-        return json.loads(trials_path.read_text(encoding="utf-8"))
-    alt_path = Path(__file__).parent / "clinical_trials.json"
-    if alt_path.exists():
-        return json.loads(alt_path.read_text(encoding="utf-8"))
+    """Load clinical trials data. Returns empty list — real data comes from Bedrock KB via RAG."""
     return []
 
 

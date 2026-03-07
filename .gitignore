@@ -31,6 +31,9 @@ samconfig.toml
 *.zip
 cdk.out/
 
+# Clinical trial data (fetched at deploy time from ClinicalTrials.gov API)
+data/trials/
+
 # Python
 *.egg-info/
 dist/

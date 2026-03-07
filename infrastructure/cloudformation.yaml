@@ -51,6 +51,16 @@ Parameters:
     Default: ''
     Description: (Optional) Bedrock Supervisor Agent Alias ID
 
+  TrialsBucket:
+    Type: String
+    Default: ''
+    Description: (Optional) S3 bucket for clinical trial data
+
+  DataSourceId:
+    Type: String
+    Default: ''
+    Description: (Optional) Bedrock KB data source ID for trial sync
+
   Stage:
     Type: String
     Default: prod
@@ -63,6 +73,7 @@ Parameters:
 Conditions:
   HasKnowledgeBase: !Not [!Equals [!Ref KnowledgeBaseId, '']]
   HasBedrockAgent: !Not [!Equals [!Ref BedrockAgentId, '']]
+  HasTrialsBucket: !Not [!Equals [!Ref TrialsBucket, '']]
 
 # ============================================================
 # RESOURCES
@@ -255,6 +266,86 @@ Resources:
                   - dynamodb:DescribeTable
                 Resource:
                   - !GetAtt CacheTable.Arn
+
+  # ----------------------------------------------------------
+  # Lambda Function - Trial Fetcher (scheduled daily via EventBridge)
+  # ----------------------------------------------------------
+  TrialFetcherFunction:
+    Type: AWS::Lambda::Function
+    Condition: HasTrialsBucket
+    Properties:
+      FunctionName: !Sub '${ProjectName}-trial-fetcher-${Stage}'
+      Description: Fetches clinical trials from ClinicalTrials.gov and syncs to Bedrock KB
+      Runtime: python3.12
+      Handler: fetch_trials.lambda_handler
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref AgentLambdaS3Key
+      Role: !GetAtt TrialFetcherRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          AWS_REGION_NAME: !Ref AWS::Region
+          TRIALS_BUCKET: !Ref TrialsBucket
+          KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
+          DATA_SOURCE_ID: !Ref DataSourceId
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  TrialFetcherRole:
+    Type: AWS::IAM::Role
+    Condition: HasTrialsBucket
+    Properties:
+      RoleName: !Sub '${ProjectName}-trial-fetcher-role-${Stage}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: TrialFetcherAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${TrialsBucket}'
+                  - !Sub 'arn:aws:s3:::${TrialsBucket}/*'
+              - Effect: Allow
+                Action:
+                  - bedrock:StartIngestionJob
+                Resource: '*'
+
+  TrialFetchSchedule:
+    Type: AWS::Events::Rule
+    Condition: HasTrialsBucket
+    Properties:
+      Name: !Sub '${ProjectName}-trial-fetch-daily-${Stage}'
+      Description: Daily clinical trial data refresh from ClinicalTrials.gov
+      ScheduleExpression: 'rate(1 day)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt TrialFetcherFunction.Arn
+          Id: TrialFetcherTarget
+
+  TrialFetchSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasTrialsBucket
+    Properties:
+      FunctionName: !Ref TrialFetcherFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt TrialFetchSchedule.Arn
 
   # ----------------------------------------------------------
   # API Gateway - REST API
@@ -633,3 +724,8 @@ Outputs:
   ApiProcessAgentEndpoint:
     Description: Full URL for the /api/process-agent endpoint (multi-agent)
     Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/api/process-agent'
+
+  TrialFetcherFunctionArn:
+    Condition: HasTrialsBucket
+    Description: Trial Fetcher Lambda ARN
+    Value: !GetAtt TrialFetcherFunction.Arn

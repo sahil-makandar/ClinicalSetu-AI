@@ -4,7 +4,7 @@ import {
   ArrowLeft, FileText, UserCheck, Send, FlaskConical,
   CheckCircle2, AlertTriangle, Shield, Clock, Sparkles,
   Printer, ChevronDown, ChevronUp, Check, Stethoscope, Zap, TrendingUp,
-  ClipboardList, Edit3, Languages, Loader2
+  ClipboardList, Edit3, Languages, Loader2, Bot, ArrowRight
 } from 'lucide-react';
 import type { ProcessingResult, Consultation, PatientSummary } from '../types';
 import { translateSummary } from '../services/api';
@@ -180,6 +180,7 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>('soap');
   const [approvedSections, setApprovedSections] = useState<Set<string>>(new Set());
   const [finalized, setFinalized] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
   // Per-tab translation state
   const [translatedData, setTranslatedData] = useState<Record<string, { data: Record<string, unknown> | null; lang: string }>>({});
 
@@ -806,29 +807,98 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
           </div>
         )}
 
-        {/* Processing Metadata */}
-        <div className="mt-8 bg-white rounded-2xl border border-slate-200/60 shadow-sm p-5 no-print">
-          <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-medical-500" />
-            AI Processing Details
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {result.processing_steps?.map((step, i) => (
-              <div key={i} className="bg-slate-50 rounded-xl p-3">
-                <p className="text-xs text-slate-500 font-medium">{step.step}</p>
-                <p className="text-sm font-semibold text-slate-800 flex items-center gap-1 mt-1">
-                  <Clock className="w-3 h-3 text-medical-500" />
-                  {(step.duration_ms / 1000).toFixed(1)}s
+        {/* Agent Orchestration Trace */}
+        <div className="mt-8 bg-white rounded-2xl border border-slate-200/60 shadow-sm overflow-hidden no-print">
+          <button
+            onClick={() => setShowTrace(!showTrace)}
+            className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50/50 transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-sm">
+                <Bot className="w-4 h-4 text-white" />
+              </div>
+              <div className="text-left">
+                <h3 className="text-sm font-bold text-slate-900">Agent Orchestration Trace</h3>
+                <p className="text-xs text-slate-500">
+                  {result.metadata?.architecture || 'Multi-Agent Collaboration'} &middot; {((result.metadata?.total_processing_time_ms || 0) / 1000).toFixed(1)}s
                 </p>
               </div>
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-4 mt-4 pt-4 border-t border-slate-100 text-xs text-slate-400">
-            <span className="flex items-center gap-1"><Stethoscope className="w-3 h-3" /> {result.metadata?.model_used}</span>
-            <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {((result.metadata?.total_processing_time_ms || 0) / 1000).toFixed(1)}s total</span>
-            <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> {result.metadata?.version}</span>
-            {result.metadata?.architecture && <span className="flex items-center gap-1"><Zap className="w-3 h-3" /> {result.metadata.architecture}</span>}
-          </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="bg-indigo-50 text-indigo-700 border border-indigo-200/60 px-2 py-0.5 rounded-full font-semibold">
+                  {result.metadata?.agents_invoked || result.processing_steps?.filter(s => s.step.includes('Supervisor')).length || 0} agents
+                </span>
+                <span className="bg-teal-50 text-teal-700 border border-teal-200/60 px-2 py-0.5 rounded-full font-semibold">
+                  {result.metadata?.tools_called || result.processing_steps?.filter(s => s.step.includes('called')).length || 0} tools
+                </span>
+              </div>
+              <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center">
+                {showTrace ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+              </div>
+            </div>
+          </button>
+
+          {showTrace && (
+            <div className="border-t border-slate-100">
+              {/* Timeline */}
+              <div className="px-5 py-4 space-y-1">
+                {result.processing_steps?.map((step, i) => {
+                  const isSupervisor = step.step.includes('Supervisor');
+                  const isToolCall = step.step.includes('called');
+                  const agentName = step.step.includes('->') ? step.step.split('-> ')[1] : step.step.replace('Agent called: ', '');
+                  const colorMap: Record<string, string> = {
+                    'Supervisor': 'border-indigo-300 bg-indigo-50 text-indigo-600',
+                    'SOAPAgent': 'border-teal-300 bg-teal-50 text-teal-600',
+                    'SummaryAgent': 'border-sky-300 bg-sky-50 text-sky-600',
+                    'ReferralAgent': 'border-amber-300 bg-amber-50 text-amber-600',
+                    'TrialAgent': 'border-violet-300 bg-violet-50 text-violet-600',
+                  };
+                  const matchedColor = Object.entries(colorMap).find(([k]) => step.step.includes(k));
+                  const dotColor = matchedColor ? matchedColor[1] : (isToolCall ? 'border-teal-300 bg-teal-50 text-teal-600' : 'border-slate-300 bg-slate-50 text-slate-600');
+
+                  return (
+                    <div key={i} className="flex items-center gap-3 py-1.5">
+                      {/* Timeline dot + line */}
+                      <div className="flex flex-col items-center w-5">
+                        <div className={`w-3 h-3 rounded-full border-2 ${dotColor}`} />
+                        {i < (result.processing_steps?.length || 0) - 1 && (
+                          <div className="w-px h-4 bg-slate-200" />
+                        )}
+                      </div>
+                      {/* Content */}
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        {isSupervisor && <ArrowRight className="w-3 h-3 text-indigo-400 shrink-0" />}
+                        <span className="text-xs text-slate-700 truncate">{step.step}</span>
+                      </div>
+                      {/* Duration */}
+                      <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                        {step.duration_ms > 0 ? `${(step.duration_ms / 1000).toFixed(1)}s` : ''}
+                      </span>
+                      {/* Status */}
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${
+                        step.status === 'completed' ? 'bg-emerald-50 text-emerald-600' :
+                        step.status === 'failed' ? 'bg-rose-50 text-rose-600' :
+                        'bg-slate-50 text-slate-500'
+                      }`}>
+                        {step.status}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Summary footer */}
+              <div className="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex flex-wrap items-center gap-4 text-xs text-slate-400">
+                <span className="flex items-center gap-1"><Stethoscope className="w-3 h-3" /> {result.metadata?.model_used}</span>
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {((result.metadata?.total_processing_time_ms || 0) / 1000).toFixed(1)}s total</span>
+                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> {result.metadata?.version}</span>
+                {result.metadata?.fallback_reason && (
+                  <span className="flex items-center gap-1 text-amber-500"><AlertTriangle className="w-3 h-3" /> Fallback: {result.metadata.fallback_reason}</span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </div>

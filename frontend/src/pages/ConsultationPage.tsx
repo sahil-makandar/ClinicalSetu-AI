@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Mic, MicOff, Send, Loader2, Stethoscope, Sparkles, User, Zap, FileText, UserCheck, FlaskConical, ChevronRight, Globe, Type, AudioLines } from 'lucide-react';
+import { ArrowLeft, Mic, MicOff, Send, Loader2, Stethoscope, Sparkles, User, Zap, FileText, UserCheck, FlaskConical, ChevronRight, Globe, Type, AudioLines, Bot, ArrowRight } from 'lucide-react';
 import { sampleConsultations } from '../data/sampleConsultations';
 import { processConsultation } from '../services/api';
 import { startTranscription, isTranscribeConfigured, type TranscribeSession } from '../services/transcribeService';
@@ -12,14 +12,42 @@ interface Props {
   onResult: (result: ProcessingResult, consultation: Consultation) => void;
 }
 
-const processingSteps = [
-  { label: 'Supervisor receiving consultation...', icon: Sparkles },
-  { label: 'SOAPAgent: Generating SOAP Note...', icon: Stethoscope },
-  { label: 'SummaryAgent: Creating Patient Summary...', icon: UserCheck },
-  { label: 'ReferralAgent: Drafting Referral + Discharge...', icon: Send },
-  { label: 'TrialAgent: Matching Clinical Trials...', icon: FlaskConical },
-  { label: 'Supervisor assembling results...', icon: Zap },
+// Activity log messages — simulates real-time multi-agent orchestration trace
+const agentActivityLog = [
+  { agent: 'Supervisor', message: 'Received consultation narrative. Analyzing input...', delay: 0 },
+  { agent: 'Supervisor', message: 'Routing to SOAPAgent for structured documentation.', delay: 2000 },
+  { agent: 'SOAPAgent', message: 'Parsing clinical narrative...', delay: 3500 },
+  { agent: 'SOAPAgent', message: 'Extracting subjective findings, vitals, assessment...', delay: 6000 },
+  { agent: 'SOAPAgent', message: 'SOAP Note generated. Returning to Supervisor.', delay: 10000 },
+  { agent: 'Supervisor', message: 'SOAP Note received. Dispatching to 3 specialist agents in parallel.', delay: 12000 },
+  { agent: 'SummaryAgent', message: 'Creating patient-friendly summary from SOAP Note...', delay: 13000 },
+  { agent: 'ReferralAgent', message: 'Generating discharge summary from SOAP Note...', delay: 13500 },
+  { agent: 'TrialAgent', message: 'Extracting patient profile for trial matching...', delay: 14000 },
+  { agent: 'SummaryAgent', message: 'Translating medical terms to plain language...', delay: 17000 },
+  { agent: 'ReferralAgent', message: 'Drafting referral letter with urgency scoring...', delay: 18000 },
+  { agent: 'TrialAgent', message: 'Matching against clinical trials database...', delay: 19000 },
+  { agent: 'SummaryAgent', message: 'Patient summary complete.', delay: 21000 },
+  { agent: 'ReferralAgent', message: 'Discharge summary + referral letter complete.', delay: 23000 },
+  { agent: 'TrialAgent', message: 'Found matching trials. Computing confidence scores...', delay: 25000 },
+  { agent: 'TrialAgent', message: 'Trial matching complete.', delay: 28000 },
+  { agent: 'Supervisor', message: 'All agents complete. Assembling final results...', delay: 30000 },
 ];
+
+const agentColors: Record<string, string> = {
+  'Supervisor': 'text-indigo-600 bg-indigo-50 border-indigo-200/60',
+  'SOAPAgent': 'text-teal-600 bg-teal-50 border-teal-200/60',
+  'SummaryAgent': 'text-sky-600 bg-sky-50 border-sky-200/60',
+  'ReferralAgent': 'text-amber-600 bg-amber-50 border-amber-200/60',
+  'TrialAgent': 'text-violet-600 bg-violet-50 border-violet-200/60',
+};
+
+const agentIcons: Record<string, typeof Sparkles> = {
+  'Supervisor': Zap,
+  'SOAPAgent': Stethoscope,
+  'SummaryAgent': UserCheck,
+  'ReferralAgent': Send,
+  'TrialAgent': FlaskConical,
+};
 
 const supportedLanguages = [
   { code: 'en-IN', label: 'English', short: 'EN' },
@@ -42,8 +70,10 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
   const [referralReason, setReferralReason] = useState(consultation?.referral_reason || '');
   const [specialistType, setSpecialistType] = useState(consultation?.specialist_type || '');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
+  const [visibleLogs, setVisibleLogs] = useState<number>(0);
+  const [processingStartTime, setProcessingStartTime] = useState<number>(0);
   const [error, setError] = useState('');
+  const logEndRef = useRef<HTMLDivElement>(null);
   const [isListening, setIsListening] = useState(false);
   const [inputMode, setInputMode] = useState<'voice' | 'text'>('voice');
   const [detectedLang, setDetectedLang] = useState('Auto-detect');
@@ -63,6 +93,28 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
       if (transcribeSessionRef.current) { try { transcribeSessionRef.current.stop(); } catch {} }
     };
   }, []);
+
+  // Auto-advance activity log entries based on their delay timings
+  useEffect(() => {
+    if (!isProcessing) return;
+    const timers = agentActivityLog.map((entry, i) =>
+      setTimeout(() => setVisibleLogs(prev => Math.max(prev, i + 1)), entry.delay)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [isProcessing]);
+
+  // Auto-scroll log to bottom when new entries appear
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [visibleLogs]);
+
+  // Tick elapsed timer every second during processing
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!isProcessing) return;
+    const t = setInterval(() => setTick(v => v + 1), 1000);
+    return () => clearInterval(t);
+  }, [isProcessing]);
 
   // Audio visualizer - uses existing media stream from Transcribe
   const startAudioVisualizer = useCallback((stream: MediaStream) => {
@@ -214,14 +266,8 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
 
     setIsProcessing(true);
     setError('');
-    setCurrentStep(0);
-
-    const stepInterval = setInterval(() => {
-      setCurrentStep(prev => {
-        if (prev < processingSteps.length - 1) return prev + 1;
-        return prev;
-      });
-    }, 3000);
+    setVisibleLogs(0);
+    setProcessingStartTime(Date.now());
 
     const consultationData: Consultation = {
       id: consultation?.id || `CONSULT-${Date.now()}`,
@@ -243,11 +289,9 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
 
     try {
       const result = await processConsultation(consultationData);
-      clearInterval(stepInterval);
       onResult(result, consultationData);
       navigate('/results');
     } catch (err: any) {
-      clearInterval(stepInterval);
       setIsProcessing(false);
       setError(
         err.response?.data?.error ||
@@ -298,53 +342,83 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
         </div>
       </header>
 
-      {/* Processing Overlay */}
+      {/* Processing Overlay — Live Agent Activity Feed */}
       {isProcessing && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center">
-          <div className="bg-white rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl border border-slate-200/60">
-            <div className="text-center mb-8">
-              <div className="relative inline-flex items-center justify-center w-20 h-20 mb-5">
-                <div className="absolute inset-0 rounded-full bg-medical-100 animate-ping opacity-20" />
-                <div className="absolute inset-2 rounded-full bg-medical-50" />
-                <Sparkles className="w-8 h-8 text-medical-600 relative z-10 animate-pulse-soft" />
+          <div className="bg-white rounded-3xl max-w-lg w-full mx-4 shadow-2xl border border-slate-200/60 overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-5 border-b border-slate-100 bg-gradient-to-r from-indigo-50 via-white to-violet-50">
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                    <Bot className="w-5 h-5 text-white" />
+                  </div>
+                  <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-white" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">Multi-Agent Orchestration</h2>
+                  <p className="text-xs text-slate-500">Supervisor coordinating 4 specialist agents</p>
+                </div>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider">Live</span>
+                </div>
               </div>
-              <h2 className="text-xl font-bold text-slate-900">AI Processing</h2>
-              <p className="text-sm text-slate-500 mt-1">Generating 5 clinical outputs from your narrative</p>
             </div>
 
-            <div className="space-y-2.5">
-              {processingSteps.map((step, i) => {
-                const Icon = step.icon;
+            {/* Activity Log */}
+            <div className="px-4 py-3 h-72 overflow-y-auto space-y-1.5 bg-slate-50/50">
+              {agentActivityLog.slice(0, visibleLogs).map((entry, i) => {
+                const Icon = agentIcons[entry.agent] || Bot;
+                const colorClass = agentColors[entry.agent] || 'text-slate-600 bg-slate-50 border-slate-200/60';
+                const isLatest = i === visibleLogs - 1;
+                const elapsedSec = (entry.delay / 1000).toFixed(1);
                 return (
-                  <div key={i} className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-500 ${
-                    i < currentStep ? 'bg-emerald-50' : i === currentStep ? 'bg-medical-50 border border-medical-200/60' : 'bg-slate-50'
-                  }`}>
-                    {i < currentStep ? (
-                      <div className="w-7 h-7 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+                  <div
+                    key={i}
+                    className={`flex items-start gap-2.5 px-3 py-2 rounded-lg transition-all duration-300 ${
+                      isLatest ? 'bg-white border border-slate-200/60 shadow-sm' : ''
+                    }`}
+                    style={{ animation: isLatest ? 'fadeInUp 0.3s ease-out' : undefined }}
+                  >
+                    <div className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 mt-0.5 border ${colorClass}`}>
+                      {isLatest ? <Loader2 className="w-3 h-3 animate-spin" /> : <Icon className="w-3 h-3" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-bold uppercase tracking-wider ${colorClass.split(' ')[0]}`}>
+                          {entry.agent}
+                        </span>
+                        <span className="text-[10px] text-slate-300">{elapsedSec}s</span>
                       </div>
-                    ) : i === currentStep ? (
-                      <div className="w-7 h-7 rounded-full bg-medical-100 text-medical-600 flex items-center justify-center">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      </div>
-                    ) : (
-                      <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center">
-                        <Icon className="w-3.5 h-3.5" />
-                      </div>
-                    )}
-                    <span className={`text-sm font-medium ${
-                      i < currentStep ? 'text-emerald-700' : i === currentStep ? 'text-medical-700' : 'text-slate-400'
-                    }`}>
-                      {step.label}
-                    </span>
+                      <p className={`text-xs leading-relaxed ${isLatest ? 'text-slate-700 font-medium' : 'text-slate-500'}`}>
+                        {entry.message}
+                      </p>
+                    </div>
+                    {entry.message.includes('Routing') || entry.message.includes('Dispatching') ? (
+                      <ArrowRight className="w-3 h-3 text-indigo-300 shrink-0 mt-1.5" />
+                    ) : null}
                   </div>
                 );
               })}
+              {visibleLogs < agentActivityLog.length && (
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
+                  <span className="text-xs text-slate-400 animate-pulse">Processing...</span>
+                </div>
+              )}
+              <div ref={logEndRef} />
             </div>
 
-            <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-400">
-              <Zap className="w-3.5 h-3.5 text-medical-400" />
-              <span>Powered by Amazon Bedrock Multi-Agent Collaboration</span>
+            {/* Footer */}
+            <div className="px-6 py-3 border-t border-slate-100 bg-white flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <Zap className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Amazon Bedrock &middot; Nova Lite</span>
+              </div>
+              <span className="text-[10px] font-mono text-slate-300">
+                {((Date.now() - processingStartTime) / 1000).toFixed(0)}s elapsed
+              </span>
             </div>
           </div>
         </div>

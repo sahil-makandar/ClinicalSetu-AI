@@ -20,9 +20,7 @@ SHARED_PROMPTS = [
     ("backend/prompts/discharge_summary.txt", "prompts/discharge_summary.txt"),
 ]
 
-SHARED_DATA = [
-    ("data/clinical_trials.json", "clinical_trials.json"),
-]
+SHARED_DATA = []
 
 
 def create_zip(output_name, files):
@@ -48,11 +46,12 @@ create_zip("lambda_deployment.zip", [
     *SHARED_DATA,
 ])
 
-# 2. Agent Lambda (tool executor + invoker + monolithic fallback)
+# 2. Agent Lambda (tool executor + invoker + monolithic fallback + trial fetcher)
 create_zip("agent_lambda_deployment.zip", [
     ("backend/lambda/agent_tool_executor.py", "agent_tool_executor.py"),
     ("backend/lambda/invoke_agent.py", "invoke_agent.py"),
     ("backend/lambda/process_consultation.py", "process_consultation.py"),
+    ("backend/lambda/fetch_trials.py", "fetch_trials.py"),
     *SHARED_PROMPTS,
     *SHARED_DATA,
 ])

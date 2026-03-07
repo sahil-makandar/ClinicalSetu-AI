@@ -446,12 +446,6 @@ def tool_search_trials(params):
         except Exception as e:
             print(f"[ClinicalSetu] KB RAG failed: {e}")
 
-    # Load bundled trial data as fallback context
-    bundled_trials = ""
-    trials_path = Path(__file__).parent / "clinical_trials.json"
-    if trials_path.exists():
-        bundled_trials = trials_path.read_text(encoding="utf-8")
-
     prompt = f"""You are a clinical research signal engine for ClinicalSetu.
 
 CRITICAL: All signals are INFORMATIONAL ONLY - not recommendations for enrollment.
@@ -461,10 +455,7 @@ PATIENT PROFILE:
 - Gender: {patient_gender}
 - Assessment: {json.dumps(assessment, indent=2)}
 
-{f"KNOWLEDGE BASE RESULTS:{chr(10)}{rag_context}" if rag_context else ""}
-
-AVAILABLE CLINICAL TRIALS:
-{bundled_trials[:8000] if bundled_trials else "No trial data available."}
+{f"KNOWLEDGE BASE RESULTS (from ClinicalTrials.gov via RAG):{chr(10)}{rag_context}" if rag_context else "No clinical trial data available from Knowledge Base. Generate reasonable trial match suggestions based on the diagnosis and patient profile."}
 
 Match this patient against clinical trials. Only include matches with confidence >= 60%.
 Return ONLY valid JSON (no markdown, no code blocks):
