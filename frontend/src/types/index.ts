@@ -3,6 +3,7 @@ export interface Patient {
   age: number;
   gender: string;
   patient_id: string;
+  phone?: string;
 }
 
 export interface Doctor {
@@ -205,6 +206,22 @@ export interface TrialMatches {
   trial_matches: TrialMatch[];
   summary: string;
   disclaimer: string;
+}
+
+export interface Visit {
+  consultation_id: string;
+  visit_date: string;
+  patient_name: string;
+  patient_age: number;
+  patient_gender: string;
+  doctor_name: string;
+  doctor_speciality: string;
+  hospital: string;
+  diagnosis: string;
+  patient_summary: PatientSummary;
+  medications: Array<{ name: string; how: string }>;
+  follow_up: string;
+  warning_signs: string[];
 }
 
 export interface ProcessingStep {

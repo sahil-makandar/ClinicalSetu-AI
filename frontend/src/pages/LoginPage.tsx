@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Shield, Activity, Stethoscope, Sparkles, ArrowRight, Mail, Lock, User } from 'lucide-react';
+import { Shield, Activity, Stethoscope, Sparkles, ArrowRight, Mail, Lock, User, Phone, KeyRound } from 'lucide-react';
 import { demoDoctors } from '../data/sampleConsultations';
 
 type LoginMode = 'select' | 'sso' | 'email';
@@ -7,7 +7,7 @@ type UserType = 'doctor' | 'patient';
 
 interface Props {
   onLogin: (doctor: { id: string; name: string; speciality: string; hospital: string }) => void;
-  onPatientLogin?: () => void;
+  onPatientLogin?: (phone: string) => void;
 }
 
 export default function LoginPage({ onLogin, onPatientLogin }: Props) {
@@ -16,6 +16,9 @@ export default function LoginPage({ onLogin, onPatientLogin }: Props) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
 
   const handleEmailLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +31,7 @@ export default function LoginPage({ onLogin, onPatientLogin }: Props) {
       }
     } else {
       if (email === 'patient@clinicalsetu.in' && password === 'demo123') {
-        onPatientLogin?.();
+        onPatientLogin?.(phone || '+919876543210');
       } else {
         setError('Invalid credentials. Try patient@clinicalsetu.in / demo123');
       }
@@ -40,7 +43,7 @@ export default function LoginPage({ onLogin, onPatientLogin }: Props) {
     if (userType === 'doctor') {
       onLogin(demoDoctors[provider === 'google' ? 0 : 1]);
     } else {
-      onPatientLogin?.();
+      onPatientLogin?.(phone || '+919876543210');
     }
   };
 
@@ -118,7 +121,7 @@ export default function LoginPage({ onLogin, onPatientLogin }: Props) {
               Doctor Portal
             </button>
             <button
-              onClick={() => { setUserType('patient'); setLoginMode('sso'); setError(''); }}
+              onClick={() => { setUserType('patient'); setLoginMode('sso'); setError(''); setOtpSent(false); setOtp(''); }}
               className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
                 userType === 'patient' ? 'bg-white text-medical-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
@@ -136,7 +139,7 @@ export default function LoginPage({ onLogin, onPatientLogin }: Props) {
             <p className="text-slate-500 mt-1.5 text-sm">
               {userType === 'doctor'
                 ? 'Select a profile or sign in to access the clinical workspace'
-                : 'Sign in to view your consultation summaries'}
+                : 'Sign in with your phone number to view visit summaries'}
             </p>
           </div>
 
@@ -170,8 +173,88 @@ export default function LoginPage({ onLogin, onPatientLogin }: Props) {
             </>
           )}
 
-          {/* SSO Buttons */}
-          {(loginMode === 'select' || loginMode === 'sso') && (
+          {/* Patient Phone+OTP Login */}
+          {userType === 'patient' && (
+            <div className="space-y-4 mb-5">
+              {!otpSent ? (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">Phone Number</label>
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="tel"
+                        value={phone}
+                        onChange={(e) => { setPhone(e.target.value); setError(''); }}
+                        placeholder="+91 98765 43210"
+                        className="w-full pl-10 pr-4 py-3 rounded-xl border-2 border-slate-200 bg-white focus:border-medical-400 focus:outline-none text-sm transition-colors"
+                      />
+                    </div>
+                  </div>
+                  {error && (
+                    <p className="text-xs text-rose-600 bg-rose-50 px-3 py-2 rounded-lg border border-rose-200/60">{error}</p>
+                  )}
+                  <button
+                    onClick={() => {
+                      if (!phone.trim()) { setError('Please enter your phone number'); return; }
+                      setOtpSent(true);
+                      setError('');
+                    }}
+                    className="w-full py-3 rounded-xl text-white font-semibold text-sm transition-all cursor-pointer shadow-md shadow-medical-600/20 hover:shadow-lg"
+                    style={{ background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)' }}
+                  >
+                    Send OTP
+                  </button>
+                  <p className="text-xs text-slate-400 text-center">
+                    Demo: enter any phone number (e.g. <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">+919876543210</code>)
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="text-center mb-2">
+                    <p className="text-sm text-slate-600">OTP sent to <strong>{phone}</strong></p>
+                    <button onClick={() => { setOtpSent(false); setOtp(''); }} className="text-xs text-medical-600 hover:underline cursor-pointer mt-1">Change number</button>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1.5">Enter OTP</label>
+                    <div className="relative">
+                      <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="text"
+                        value={otp}
+                        onChange={(e) => { setOtp(e.target.value); setError(''); }}
+                        placeholder="1234"
+                        maxLength={4}
+                        className="w-full pl-10 pr-4 py-3 rounded-xl border-2 border-slate-200 bg-white focus:border-medical-400 focus:outline-none text-sm transition-colors text-center tracking-[0.5em] font-mono text-lg"
+                      />
+                    </div>
+                  </div>
+                  {error && (
+                    <p className="text-xs text-rose-600 bg-rose-50 px-3 py-2 rounded-lg border border-rose-200/60">{error}</p>
+                  )}
+                  <button
+                    onClick={() => {
+                      if (otp === '1234') {
+                        onPatientLogin?.(phone);
+                      } else {
+                        setError('Invalid OTP. Try 1234');
+                      }
+                    }}
+                    className="w-full py-3 rounded-xl text-white font-semibold text-sm transition-all cursor-pointer shadow-md shadow-medical-600/20 hover:shadow-lg"
+                    style={{ background: 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)' }}
+                  >
+                    Verify & Sign In
+                  </button>
+                  <p className="text-xs text-slate-400 text-center">
+                    Demo OTP: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">1234</code>
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Doctor SSO Buttons */}
+          {userType === 'doctor' && (loginMode === 'select' || loginMode === 'sso') && (
             <div className="space-y-2.5 mb-4">
               <button
                 onClick={() => handleSSOLogin('google')}
@@ -224,8 +307,8 @@ export default function LoginPage({ onLogin, onPatientLogin }: Props) {
             </div>
           )}
 
-          {/* Email Login Form */}
-          {loginMode === 'email' && (
+          {/* Doctor Email Login Form */}
+          {userType === 'doctor' && loginMode === 'email' && (
             <form onSubmit={handleEmailLogin} className="space-y-4 mb-5">
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1.5">Email</label>
@@ -235,7 +318,7 @@ export default function LoginPage({ onLogin, onPatientLogin }: Props) {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder={userType === 'doctor' ? 'doctor@clinicalsetu.in' : 'patient@clinicalsetu.in'}
+                    placeholder="doctor@clinicalsetu.in"
                     className="w-full pl-10 pr-4 py-3 rounded-xl border-2 border-slate-200 bg-white focus:border-medical-400 focus:outline-none text-sm transition-colors"
                     required
                   />
@@ -267,14 +350,13 @@ export default function LoginPage({ onLogin, onPatientLogin }: Props) {
               </button>
               <button
                 type="button"
-                onClick={() => setLoginMode(userType === 'doctor' ? 'select' : 'sso')}
+                onClick={() => setLoginMode('select')}
                 className="w-full text-sm text-slate-500 hover:text-slate-700 py-2 cursor-pointer"
               >
                 Back to other sign-in options
               </button>
               <p className="text-xs text-slate-400 text-center">
-                Demo: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
-                  {userType === 'doctor' ? 'doctor' : 'patient'}@clinicalsetu.in</code> / <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">demo123</code>
+                Demo: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">doctor@clinicalsetu.in</code> / <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">demo123</code>
               </p>
             </form>
           )}

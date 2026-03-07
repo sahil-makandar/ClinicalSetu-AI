@@ -7,7 +7,7 @@ import {
   ClipboardList, Edit3, Languages, Loader2, Bot, ArrowRight
 } from 'lucide-react';
 import type { ProcessingResult, Consultation, PatientSummary } from '../types';
-import { translateSummary } from '../services/api';
+import { translateSummary, saveVisit } from '../services/api';
 
 interface Props {
   result: ProcessingResult;
@@ -180,6 +180,7 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>('soap');
   const [approvedSections, setApprovedSections] = useState<Set<string>>(new Set());
   const [finalized, setFinalized] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [showTrace, setShowTrace] = useState(false);
   // Per-tab translation state
   const [translatedData, setTranslatedData] = useState<Record<string, { data: Record<string, unknown> | null; lang: string }>>({});
@@ -240,12 +241,41 @@ export default function ResultsPage({ result, consultation, doctor }: Props) {
             {finalized ? (
               <div className="flex items-center gap-1.5 text-xs bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-4 py-2 rounded-xl font-semibold">
                 <CheckCircle2 className="w-4 h-4" />
-                Validated
+                {saving ? 'Saving...' : 'Validated & Saved'}
               </div>
             ) : (
               <button
-                onClick={() => setFinalized(true)}
-                disabled={!allApproved}
+                onClick={async () => {
+                  setFinalized(true);
+                  setSaving(true);
+                  try {
+                    const meds = soap?.plan?.medications_prescribed?.map(m => ({
+                      name: m.name,
+                      how: `${m.dosage} ${m.frequency} for ${m.duration}`,
+                    })) || [];
+                    await saveVisit({
+                      phone_number: consultation.patient.phone || '',
+                      hospital: doctor.hospital,
+                      consultation_id: consultation.id,
+                      patient_name: consultation.patient.name,
+                      patient_age: consultation.patient.age,
+                      patient_gender: consultation.patient.gender,
+                      patient_id: consultation.patient.patient_id,
+                      doctor_name: doctor.name,
+                      doctor_speciality: doctor.speciality,
+                      diagnosis: soap?.assessment?.primary_diagnosis || '',
+                      patient_summary: summary as unknown as Record<string, unknown>,
+                      medications: meds,
+                      follow_up: soap?.plan?.follow_up || '',
+                      warning_signs: summary?.warning_signs || [],
+                    });
+                  } catch (err) {
+                    console.error('Failed to save visit:', err);
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                disabled={!allApproved || saving}
                 className="flex items-center gap-1.5 text-xs text-white px-4 py-2 rounded-xl font-semibold transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-medical-600/20"
                 style={{ background: allApproved ? 'linear-gradient(135deg, #0f766e 0%, #0d9488 100%)' : '#94a3b8' }}
               >

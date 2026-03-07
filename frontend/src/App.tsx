@@ -14,13 +14,15 @@ function App() {
   const [doctor, setDoctor] = useState<{ id: string; name: string; speciality: string; hospital: string } | null>(null);
   const [currentResult, setCurrentResult] = useState<ProcessingResult | null>(null);
   const [currentConsultation, setCurrentConsultation] = useState<Consultation | null>(null);
+  const [patientPhone, setPatientPhone] = useState('');
 
   const handleDoctorLogin = (doc: { id: string; name: string; speciality: string; hospital: string }) => {
     setDoctor(doc);
     setUserMode('doctor');
   };
 
-  const handlePatientLogin = () => {
+  const handlePatientLogin = (phone: string) => {
+    setPatientPhone(phone);
     setUserMode('patient');
   };
 
@@ -29,6 +31,7 @@ function App() {
     setUserMode('none');
     setCurrentResult(null);
     setCurrentConsultation(null);
+    setPatientPhone('');
   };
 
   if (userMode === 'none') {
@@ -36,7 +39,7 @@ function App() {
   }
 
   if (userMode === 'patient') {
-    return <PatientPortalPage onLogout={handleLogout} />;
+    return <PatientPortalPage onLogout={handleLogout} phone={patientPhone} />;
   }
 
   return (

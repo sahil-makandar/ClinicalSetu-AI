@@ -52,6 +52,7 @@ create_zip("agent_lambda_deployment.zip", [
     ("backend/lambda/invoke_agent.py", "invoke_agent.py"),
     ("backend/lambda/process_consultation.py", "process_consultation.py"),
     ("backend/lambda/fetch_trials.py", "fetch_trials.py"),
+    ("backend/lambda/visit_api.py", "visit_api.py"),
     *SHARED_PROMPTS,
     *SHARED_DATA,
 ])

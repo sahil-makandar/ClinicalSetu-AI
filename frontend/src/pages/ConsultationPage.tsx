@@ -67,6 +67,7 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
   const [patientName, setPatientName] = useState(consultation?.patient.name || '');
   const [patientAge, setPatientAge] = useState(consultation?.patient.age?.toString() || '');
   const [patientGender, setPatientGender] = useState(consultation?.patient.gender || 'Male');
+  const [patientPhone, setPatientPhone] = useState(consultation?.patient.phone || '');
   const [referralReason, setReferralReason] = useState(consultation?.referral_reason || '');
   const [specialistType, setSpecialistType] = useState(consultation?.specialist_type || '');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -156,6 +157,7 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
     setPatientGender(sample.patient.gender);
     setReferralReason(sample.referral_reason || '');
     setSpecialistType(sample.specialist_type || '');
+    setPatientPhone(sample.patient.phone || '+919876543210');
     setInputMode('text');
   };
 
@@ -252,8 +254,8 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
   };
 
   const handleProcess = async () => {
-    if (!text.trim() || !patientName.trim() || !patientAge.trim()) {
-      setError('Please fill in the consultation text and patient details.');
+    if (!text.trim() || !patientName.trim() || !patientAge.trim() || !patientPhone.trim()) {
+      setError('Please fill in the consultation text, patient details, and phone number.');
       return;
     }
 
@@ -276,6 +278,7 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
         age: parseInt(patientAge),
         gender: patientGender,
         patient_id: consultation?.patient.patient_id || `SYN-PT-${Date.now()}`,
+        phone: patientPhone,
       },
       doctor: {
         name: doctor.name,
@@ -659,6 +662,16 @@ export default function ConsultationPage({ doctor, consultation, onResult }: Pro
                     value={patientName}
                     onChange={(e) => setPatientName(e.target.value)}
                     placeholder="Full name"
+                    className="w-full px-3.5 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-medical-500/20 focus:border-medical-500 focus:bg-white transition-all duration-200"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 font-medium block mb-1.5">Phone Number</label>
+                  <input
+                    type="tel"
+                    value={patientPhone}
+                    onChange={(e) => setPatientPhone(e.target.value)}
+                    placeholder="+91 98765 43210"
                     className="w-full px-3.5 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-medical-500/20 focus:border-medical-500 focus:bg-white transition-all duration-200"
                   />
                 </div>

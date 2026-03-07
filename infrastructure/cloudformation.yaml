@@ -150,6 +150,41 @@ Resources:
           Value: !Ref ProjectName
 
   # ----------------------------------------------------------
+  # DynamoDB Table - Patient Visit Records
+  # ----------------------------------------------------------
+  VisitsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-visits-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: phone_number
+          AttributeType: S
+        - AttributeName: visit_date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: phone-index
+          KeySchema:
+            - AttributeName: phone_number
+              KeyType: HASH
+            - AttributeName: visit_date
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ----------------------------------------------------------
   # Lambda Function - Main API Handler
   # ----------------------------------------------------------
   ProcessConsultationFunction:
@@ -263,9 +298,12 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:PutItem
+                  - dynamodb:Query
                   - dynamodb:DescribeTable
                 Resource:
                   - !GetAtt CacheTable.Arn
+                  - !GetAtt VisitsTable.Arn
+                  - !Sub '${VisitsTable.Arn}/index/*'
 
   # ----------------------------------------------------------
   # Lambda Function - Trial Fetcher (scheduled daily via EventBridge)
@@ -346,6 +384,29 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt TrialFetchSchedule.Arn
+
+  # ----------------------------------------------------------
+  # Lambda Function - Visit API (save/fetch patient visits)
+  # ----------------------------------------------------------
+  VisitApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${ProjectName}-visit-api-${Stage}'
+      Description: Handles saving and retrieving patient visit records
+      Runtime: python3.12
+      Handler: visit_api.lambda_handler
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref AgentLambdaS3Key
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          VISITS_TABLE: !Ref VisitsTable
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
 
   # ----------------------------------------------------------
   # API Gateway - REST API
@@ -472,6 +533,111 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  # /api/save-visit resource
+  ApiResourceSaveVisit:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref ApiResourceApi
+      PathPart: save-visit
+
+  # POST /api/save-visit
+  ApiMethodSaveVisit:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceSaveVisit
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${VisitApiFunction.Arn}/invocations'
+
+  # OPTIONS /api/save-visit
+  ApiMethodSaveVisitOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceSaveVisit
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # /api/patient-visits resource
+  ApiResourcePatientVisits:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref ApiResourceApi
+      PathPart: patient-visits
+
+  # POST /api/patient-visits
+  ApiMethodPatientVisits:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourcePatientVisits
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${VisitApiFunction.Arn}/invocations'
+
+  # OPTIONS /api/patient-visits
+  ApiMethodPatientVisitsOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourcePatientVisits
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # Lambda permission for API Gateway to invoke Visit API
+  VisitApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref VisitApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
+
   # Lambda permission for API Gateway to invoke
   LambdaApiGatewayPermission:
     Type: AWS::Lambda::Permission
@@ -482,13 +648,17 @@ Resources:
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
 
   # Deploy the API
-  ApiDeployment:
+  ApiDeploymentV3:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
       - ApiMethodProcessAgent
       - ApiMethodProcessAgentOptions
       - ApiMethodTranslate
       - ApiMethodTranslateOptions
+      - ApiMethodSaveVisit
+      - ApiMethodSaveVisitOptions
+      - ApiMethodPatientVisits
+      - ApiMethodPatientVisitsOptions
     Properties:
       RestApiId: !Ref ApiGateway
 
@@ -496,7 +666,7 @@ Resources:
     Type: AWS::ApiGateway::Stage
     Properties:
       RestApiId: !Ref ApiGateway
-      DeploymentId: !Ref ApiDeployment
+      DeploymentId: !Ref ApiDeploymentV3
       StageName: !Ref Stage
       Description: !Sub '${ProjectName} ${Stage} stage'
 
