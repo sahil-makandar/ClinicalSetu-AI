@@ -84,21 +84,21 @@ def get_or_create_agent_role():
         role_arn = f"arn:aws:iam::{ACCOUNT_ID}:role/{role_name}"
         print(f"  Role exists: {role_name}")
 
-    # Permissions for invoking foundation models AND cross-region inference profiles
+    # Permissions for invoking foundation models, inference profiles, and Converse API
     permission_policy = {
         "Version": "2012-10-17",
         "Statement": [
             {
                 "Effect": "Allow",
-                "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                "Action": [
+                    "bedrock:InvokeModel",
+                    "bedrock:InvokeModelWithResponseStream",
+                    "bedrock:Converse",
+                    "bedrock:ConverseStream"
+                ],
                 "Resource": [
-                    # Foundation models (non-prefixed model IDs)
-                    f"arn:aws:bedrock:{REGION}::foundation-model/amazon.nova-lite-v1:0",
-                    f"arn:aws:bedrock:{REGION}::foundation-model/amazon.nova-micro-v1:0",
-                    f"arn:aws:bedrock:{REGION}::foundation-model/amazon.titan-embed-text-v2:0",
-                    # Cross-region inference profiles (us.* prefixed model IDs)
-                    f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:inference-profile/us.amazon.nova-lite-v1:0",
-                    f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:inference-profile/us.amazon.nova-micro-v1:0",
+                    f"arn:aws:bedrock:{REGION}::foundation-model/*",
+                    f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:inference-profile/*",
                 ]
             },
             {

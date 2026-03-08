@@ -316,20 +316,22 @@ jobs:
       - name: Fix agent service role permissions
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          echo "Updating ClinicalSetu-MultiAgentRole with inference-profile permissions..."
+          echo "Updating ClinicalSetu-MultiAgentRole with FULL Bedrock permissions..."
           cat > /tmp/agent_model_policy.json << POLICYEOF
           {
             "Version": "2012-10-17",
             "Statement": [
               {
                 "Effect": "Allow",
-                "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                "Action": [
+                  "bedrock:InvokeModel",
+                  "bedrock:InvokeModelWithResponseStream",
+                  "bedrock:Converse",
+                  "bedrock:ConverseStream"
+                ],
                 "Resource": [
-                  "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0",
-                  "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-micro-v1:0",
-                  "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0",
-                  "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:inference-profile/us.amazon.nova-lite-v1:0",
-                  "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:inference-profile/us.amazon.nova-micro-v1:0"
+                  "arn:aws:bedrock:us-east-1::foundation-model/*",
+                  "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:inference-profile/*"
                 ]
               },
               {
@@ -340,25 +342,51 @@ jobs:
             ]
           }
           POLICYEOF
-          # Substitute account ID
           sed -i "s/\${ACCOUNT_ID}/$ACCOUNT_ID/g" /tmp/agent_model_policy.json
+          echo "Policy contents:"
+          cat /tmp/agent_model_policy.json
           aws iam put-role-policy \
             --role-name ClinicalSetu-MultiAgentRole \
             --policy-name ClinicalSetuMultiAgentPolicy \
             --policy-document file:///tmp/agent_model_policy.json
-          echo "Policy updated. Waiting 15s for IAM propagation..."
-          sleep 15
+          echo "Policy updated. Waiting 20s for IAM propagation..."
+          sleep 20
 
-          # Re-prepare all agents to pick up new permissions
-          echo "Re-preparing all agents..."
+          # Re-prepare all agents AND update their aliases
+          echo "Re-preparing all agents and updating aliases..."
           for AGENT_NAME in ClinicalSetu-SOAPAgent ClinicalSetu-SummaryAgent ClinicalSetu-ReferralAgent ClinicalSetu-TrialAgent ClinicalSetu-Supervisor; do
             AGENT_ID=$(aws bedrock-agent list-agents --query "agentSummaries[?agentName=='${AGENT_NAME}'].agentId" --output text 2>/dev/null)
             if [ -n "$AGENT_ID" ]; then
-              aws bedrock-agent prepare-agent --agent-id "$AGENT_ID" --no-cli-pager
               echo "  Preparing $AGENT_NAME ($AGENT_ID)..."
+              aws bedrock-agent prepare-agent --agent-id "$AGENT_ID" --no-cli-pager
             fi
           done
-          echo "Waiting 30s for agents to prepare..."
+
+          echo "Waiting 40s for all agents to finish preparing..."
+          sleep 40
+
+          # Now update all prod aliases to point to latest version
+          echo "Updating all prod aliases to latest version..."
+          for AGENT_NAME in ClinicalSetu-SOAPAgent ClinicalSetu-SummaryAgent ClinicalSetu-ReferralAgent ClinicalSetu-TrialAgent ClinicalSetu-Supervisor; do
+            AGENT_ID=$(aws bedrock-agent list-agents --query "agentSummaries[?agentName=='${AGENT_NAME}'].agentId" --output text 2>/dev/null)
+            if [ -n "$AGENT_ID" ]; then
+              # Get prod alias ID
+              ALIAS_ID=$(aws bedrock-agent list-agent-aliases --agent-id "$AGENT_ID" \
+                --query "agentAliasSummaries[?agentAliasName=='prod'].agentAliasId" --output text 2>/dev/null)
+              if [ -n "$ALIAS_ID" ] && [ "$ALIAS_ID" != "None" ]; then
+                echo "  Updating alias for $AGENT_NAME: alias=$ALIAS_ID"
+                aws bedrock-agent update-agent-alias \
+                  --agent-id "$AGENT_ID" \
+                  --agent-alias-id "$ALIAS_ID" \
+                  --agent-alias-name "prod" \
+                  --no-cli-pager 2>&1 || echo "    Warning: alias update issue"
+              else
+                echo "  No prod alias found for $AGENT_NAME"
+              fi
+            fi
+          done
+
+          echo "Waiting 30s for aliases to stabilize..."
           sleep 30
 
       # ----- Step 4.56: Debug Multi-Agent Permissions & Connectivity -----
