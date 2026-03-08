@@ -1,16 +1,14 @@
 """
 ClinicalSetu - Multi-Agent Invoker Lambda
-Called by API Gateway. Invokes the Bedrock Supervisor Agent which orchestrates
-4 specialist collaborator agents via Multi-Agent Collaboration.
+Called by API Gateway / Lambda Function URL. Invokes the Bedrock Supervisor Agent
+which orchestrates 4 specialist collaborator agents via Multi-Agent Collaboration.
 
 Architecture:
-  Frontend -> API Gateway -> THIS Lambda -> Supervisor Agent (Bedrock)
-                                              |-> SOAPAgent
-                                              |-> SummaryAgent
-                                              |-> ReferralAgent
-                                              |-> TrialAgent
-
-Fallback: If multi-agent fails, falls back to monolithic process_consultation handler.
+  Frontend -> Lambda Function URL -> THIS Lambda -> Supervisor Agent (Bedrock)
+                                                      |-> SOAPAgent
+                                                      |-> SummaryAgent
+                                                      |-> ReferralAgent
+                                                      |-> TrialAgent
 """
 
 import json
@@ -245,39 +243,19 @@ def _extract_json_from_text(text, tool_outputs):
 
 
 def lambda_handler(event, context):
-    """
-    Main handler. Tries multi-agent first, falls back to monolithic on failure.
-    """
+    """Main handler. Invokes multi-agent orchestration."""
     # Handle CORS preflight
     if event.get("httpMethod") == "OPTIONS":
         return {"statusCode": 200, "headers": _cors_headers(), "body": ""}
 
     if not AGENT_ID or not AGENT_ALIAS_ID:
-        print("[ClinicalSetu] No agent configured, using monolithic fallback")
-        return _fallback(event, context)
+        return _error_response(500, "Multi-agent not configured: BEDROCK_AGENT_ID or BEDROCK_AGENT_ALIAS_ID missing")
 
     try:
         return _invoke_multi_agent(event)
     except Exception as e:
-        print(f"[ClinicalSetu] Multi-agent failed: {e}, falling back to monolithic")
-        return _fallback(event, context, fallback_reason=str(e))
-
-
-def _fallback(event, context, fallback_reason=None):
-    """Fall back to the monolithic process_consultation handler."""
-    try:
-        from process_consultation import lambda_handler as monolithic_handler
-        result = monolithic_handler(event, context)
-        # Tag the response as fallback
-        if result.get("statusCode") == 200:
-            body = json.loads(result["body"])
-            body["metadata"]["architecture"] = "Monolithic (fallback from multi-agent)"
-            if fallback_reason:
-                body["metadata"]["fallback_reason"] = fallback_reason
-            result["body"] = json.dumps(body, indent=2)
-        return result
-    except Exception as e2:
-        return _error_response(500, f"Both multi-agent and fallback failed: {e2}")
+        print(f"[ClinicalSetu] Multi-agent failed: {e}")
+        return _error_response(500, f"Multi-agent processing failed: {e}")
 
 
 def _cors_headers():

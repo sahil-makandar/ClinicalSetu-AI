@@ -7,7 +7,7 @@ ClinicalSetu is a clinical intelligence bridge that captures clinical intent onc
 **Core Principles:**
 - Non-diagnostic system
 - Doctor-in-the-loop validation required
-- Built using Amazon Bedrock (Nova Lite + Claude Haiku), Bedrock Multi-Agent Collaboration, Transcribe Medical, DynamoDB, Cognito
+- Built using Amazon Bedrock (Nova Lite + Nova Micro), Bedrock Multi-Agent Collaboration, Transcribe Medical, DynamoDB, Cognito
 - Operates on synthetic and public datasets only
 - No PHI storage in prototype phase
 
@@ -46,7 +46,7 @@ The ClinicalSetu platform follows a serverless, event-driven architecture levera
 │                    AI Processing Layer                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Amazon Bedrock (Converse API)                             │  │
-│  │  - Amazon Nova Lite (primary) + Claude Haiku (fallback)   │  │
+│  │  - Amazon Nova Lite (primary) + Nova Micro (fallback)   │  │
 │  │  - Retry with exponential backoff + model fallback chain  │  │
 │  │  - Structured JSON output with confidence scoring         │  │
 │  └──────────────────────────────────────────────────────────┘  │
@@ -102,6 +102,43 @@ The ClinicalSetu platform follows a serverless, event-driven architecture levera
 - **Stateless**: No session affinity required for horizontal scaling
 - **Decoupled**: Services communicate via APIs and message queues
 - **Secure**: Encryption at rest and in transit, IAM-based access control
+
+### Multi-Agent Collaboration Architecture (Deployed)
+
+ClinicalSetu uses **Amazon Bedrock Multi-Agent Collaboration** with a Supervisor-Router pattern:
+
+```
+Frontend -> API Gateway -> Agent Invoker Lambda -> Supervisor Agent
+                                                      |
+                                    +-----------------+------------------+
+                                    |                 |                  |
+                              SOAPAgent         SummaryAgent      ReferralAgent
+                                    |                 |                  |
+                              Tool Executor     Tool Executor     Tool Executor
+                              Lambda            Lambda            Lambda
+                              (generate_soap)   (generate_        (generate_referral +
+                                                patient_summary)  generate_discharge)
+                                    |
+                              TrialAgent
+                                    |
+                              Tool Executor Lambda
+                              (search_trials + KB RAG)
+```
+
+**Workflow:**
+1. Supervisor receives the full consultation narrative
+2. Supervisor delegates to SOAPAgent first (generates structured SOAP note)
+3. After SOAP completes, Supervisor sends SOAP output to remaining 3 agents in parallel:
+   - SummaryAgent: patient-friendly summary from SOAP
+   - ReferralAgent: referral letter + discharge summary from SOAP
+   - TrialAgent: clinical trial matching from SOAP assessment (with Knowledge Base RAG)
+4. Agent Invoker Lambda collects all outputs from `collaboratorInvocationOutput` traces
+5. Results returned to frontend in unified response format
+
+**IAM Configuration:**
+- Agent service role (`ClinicalSetu-MultiAgentRole`): `AmazonBedrockFullAccess` managed policy + custom KB/Lambda inline policies
+- Lambda execution roles: `bedrock:Converse` on both `foundation-model/*` and `inference-profile/*` resources (required for cross-region inference profiles like `us.amazon.nova-lite-v1:0`)
+- Resource-based Lambda permission for `bedrock.amazonaws.com` to invoke Tool Executor
 
 ---
 
@@ -267,7 +304,7 @@ Implementation via AWS Step Functions:
 
 - Amazon Bedrock **Converse API** invocation via boto3 (model-agnostic)
 - Primary model: **Amazon Nova Lite** (`us.amazon.nova-lite-v1:0`) — cost-efficient
-- Fallback model: **Claude 3 Haiku** (`anthropic.claude-3-haiku-20240307-v1:0`) — auto-failover
+- Fallback model: **Amazon Nova Micro** (`us.amazon.nova-micro-v1:0`) — auto-failover
 - Temperature: 0.3 for consistency
 - Max tokens: 4096 per invocation
 - **Retry logic**: Exponential backoff with jitter (3 retries per model, then fallback)
@@ -501,7 +538,7 @@ Triggered by "RecordStructured" event:
 ### Sequence Diagram
 
 ```
-Doctor → CloudFront → API Gateway → Lambda → Bedrock (Nova Lite / Haiku) → DynamoDB (cache)
+Doctor → CloudFront → API Gateway → Lambda → Bedrock (Nova Lite / Nova Micro) → DynamoDB (cache)
   │           │          │         │          │
   │           │          │         │          │
   ├─ Input ──→├─ Auth ──→├─ LLM ──→├─ Store ─→│
@@ -523,7 +560,7 @@ Doctor → CloudFront → API Gateway → Lambda → Bedrock (Nova Lite / Haiku)
   - Context window: 200K tokens
   - Strengths: Medical knowledge, nuanced understanding, safety
 
-- **Claude 3 Haiku**: Fallback model (auto-failover when Nova Lite is throttled)
+- **Amazon Nova Micro**: Fallback model (auto-failover when Nova Lite is throttled)
   - Use cases: Entity extraction, classification, simple formatting
   - Lower latency and cost
   - Suitable for real-time interactions
@@ -536,7 +573,7 @@ Doctor → CloudFront → API Gateway → Lambda → Bedrock (Nova Lite / Haiku)
 
 ```python
 bedrock_config = {
-    "modelId": "anthropic.claude-3-sonnet-20240229-v1:0",
+    "modelId": "us.amazon.nova-lite-v1:0",
     "inferenceConfig": {
         "temperature": 0.3,  # Low for consistency
         "topP": 0.9,
@@ -843,10 +880,10 @@ Display thresholds:
    - Retrieved guidelines: 2000 tokens
    - Consultation transcript: 4000 tokens
    - Output space: 4096 tokens
-   - Total: ~12K tokens (well within Claude 3 limits)
+   - Total: ~12K tokens (well within Nova Lite limits)
 
 3. **Summarization Fallback**
-   - If retrieved content exceeds budget, summarize using Haiku
+   - If retrieved content exceeds budget, summarize using Nova Micro
    - Extract key recommendations only
    - Preserve citations
 
@@ -939,7 +976,10 @@ Each component has dedicated IAM role with minimal permissions:
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream"
       ],
-      "Resource": "arn:aws:bedrock:*:*:model/anthropic.claude-3-*"
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/*",
+        "arn:aws:bedrock:*:*:inference-profile/*"
+      ]
     },
     {
       "Effect": "Allow",
@@ -1361,8 +1401,8 @@ The serverless architecture provides favorable cost-scaling properties:
 **Cost Optimization Strategies (Implemented)**
 
 1. **Model Selection**
-   - Amazon Nova Lite as primary model (~80% cheaper than Claude Sonnet)
-   - Claude Haiku as fallback (auto-failover only when needed)
+   - Amazon Nova Lite as primary model (~80% cheaper than Claude 3 Sonnet)
+   - Nova Micro as fallback (auto-failover only when needed)
    - DynamoDB response caching with 24h TTL — repeat consultations are free
    - PAY_PER_REQUEST billing — zero cost when idle
 
@@ -1579,7 +1619,7 @@ Phase 4: Additional languages based on demand
 **Technical Implementation**
 
 1. **Multilingual LLMs**
-   - Claude 3 supports 100+ languages
+   - Amazon Nova Lite supports 200+ languages
    - Language detection and routing
    - Translation layer for non-English inputs
    - Culturally appropriate output formatting
@@ -1747,10 +1787,10 @@ The use of synthetic data in the prototype phase enables safe development and te
 
 | Service | Purpose | Key Features |
 |---------|---------|--------------|
-| **Amazon Bedrock** | AI engine | Nova Lite (primary) + Claude Haiku (fallback), Converse API, retry/backoff |
+| **Amazon Bedrock** | AI engine | Nova Lite (primary) + Nova Micro (fallback), Converse API, retry/backoff |
 | **Bedrock Multi-Agent Collaboration** | Agent orchestration | Supervisor-Router: 1 supervisor + 4 specialist collaborator agents |
-| **AWS Lambda** (x3) | Serverless compute | Monolithic handler, Agent Invoker, Tool Executor |
-| **Amazon API Gateway** | REST API | CORS, `/api/process`, `/api/process-agent`, `/api/translate` |
+| **AWS Lambda** (x5) | Serverless compute | Agent Invoker (+ Function URL), Tool Executor, Trial Fetcher, Visit API, Translate |
+| **Amazon API Gateway** | REST API | CORS, `/api/process-agent`, `/api/translate`, `/api/save-visit`, `/api/patient-visits` |
 | **Amazon S3** | Static hosting + storage | Frontend files, Lambda deployment packages |
 | **Amazon CloudFront** | CDN | HTTPS, SPA error routing, cache control |
 | **Amazon DynamoDB** | Response caching | SHA-256 keys, 24h TTL, PAY_PER_REQUEST, fail-safe |

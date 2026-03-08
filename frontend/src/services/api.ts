@@ -2,6 +2,8 @@ import axios from 'axios';
 import type { Consultation, ProcessingResult, Visit } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// Lambda Function URL bypasses API Gateway 29s timeout limit
+const AGENT_FUNCTION_URL = import.meta.env.VITE_AGENT_FUNCTION_URL || '';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -12,10 +14,24 @@ const api = axios.create({
 });
 
 export async function processConsultation(consultation: Consultation): Promise<ProcessingResult> {
-  // Always use multi-agent path — supervisor decides which agents to invoke
-  // Falls back to monolithic internally if agent system is unavailable
+  // Use Lambda Function URL (no timeout limit)
+  // Falls back to API Gateway /api/process-agent for local dev
+  if (AGENT_FUNCTION_URL) {
+    const response = await axios.post(AGENT_FUNCTION_URL, {
+      httpMethod: 'POST',
+      body: JSON.stringify(consultation),
+    }, {
+      timeout: 300000,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = typeof response.data.body === 'string'
+      ? JSON.parse(response.data.body)
+      : response.data;
+    return data;
+  }
+
+  // Fallback: API Gateway path
   const response = await api.post('/api/process-agent', consultation);
-  // Handle Lambda proxy response (body may be stringified)
   const data = typeof response.data.body === 'string'
     ? JSON.parse(response.data.body)
     : response.data;

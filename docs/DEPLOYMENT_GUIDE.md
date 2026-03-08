@@ -1,315 +1,207 @@
 # ClinicalSetu - AWS Deployment Guide
 
-**Time required:** ~20 minutes
-**Cost:** ~$5-15 for testing (Lambda free tier, Bedrock charges per token)
+**Deployment method:** Fully automated via GitHub Actions CI/CD
+**Time required:** ~10 minutes (push and wait)
 **Region:** us-east-1 (N. Virginia)
 
 ---
 
 ## Prerequisites
 
-- AWS account with $100 credits
-- Region set to **us-east-1** (N. Virginia) in the console
-- GitHub repo pushed with latest code
-- `lambda_deployment.zip` created in project root (run `python scripts/package_lambda.py` if missing)
+- AWS account with credits
+- Region set to **us-east-1** (N. Virginia)
+- GitHub repository with code pushed to `main` branch
+- The following GitHub Secrets configured:
+  - `AWS_ACCESS_KEY_ID` — IAM user access key
+  - `AWS_SECRET_ACCESS_KEY` — IAM user secret key
+
+### IAM User Requirements
+
+The deployer IAM user needs these permissions:
+- `AdministratorAccess` (recommended for hackathon) **OR** the following:
+  - CloudFormation full access
+  - Lambda full access
+  - API Gateway full access
+  - S3 full access
+  - DynamoDB full access
+  - IAM role creation (`CAPABILITY_NAMED_IAM`)
+  - Bedrock full access (agents, models, knowledge bases)
+  - OpenSearch Serverless access
+  - CloudFront access
+  - Cognito Identity Pool access
+  - EventBridge access
+
+### Bedrock Model Access
+
+Before first deployment, enable model access in the AWS Console:
+
+1. Open **AWS Console** → **Amazon Bedrock** → **Model access**
+2. Confirm region is **us-east-1**
+3. Enable access for:
+   - **Amazon Nova Lite** (primary model)
+   - **Amazon Nova Micro** (fallback model)
+   - **Amazon Titan Text Embeddings V2** (for Knowledge Base RAG)
+4. These use cross-region inference profiles (`us.amazon.nova-lite-v1:0`, `us.amazon.nova-micro-v1:0`)
 
 ---
 
-## What Gets Created
+## What Gets Deployed
+
+The CI/CD pipeline deploys **13 AWS services** via a single CloudFormation template:
 
 | Resource | Service | Purpose |
 |----------|---------|---------|
-| Bedrock access | Amazon Bedrock | Enable Claude 3 Sonnet model |
-| Lambda function | AWS Lambda | Backend API (processes consultations) |
-| REST API | API Gateway | HTTPS endpoint for frontend |
-| Web app | AWS Amplify | Frontend hosting from GitHub |
-
-**No `.env` files or AWS keys need to be added to any config files.** Lambda uses its IAM role for Bedrock access. Amplify only needs one env var (`VITE_API_URL`).
-
----
-
-## STEP 1: Verify Bedrock Model Access (2 min)
-
-1. Open **AWS Console** → search **"Amazon Bedrock"** → click it
-2. Confirm you're in **us-east-1** (top-right region dropdown)
-3. Left sidebar → **Model access**
-4. Check that **Anthropic Claude 3 Sonnet** shows **"Access granted"**
-5. If NOT granted:
-   - Click **Manage model access**
-   - Check **Claude 3 Sonnet**
-   - Click **Save changes**
-   - If a use case form appears, fill: "Healthcare AI prototype, hackathon use, synthetic data only"
-   - Approval is usually instant
+| AI Engine | Amazon Bedrock (Nova Lite + Nova Micro) | Core AI — Converse API with cross-region inference profiles |
+| Multi-Agent | Bedrock Multi-Agent Collaboration | Supervisor-Router: 1 supervisor + 4 specialist agents |
+| RAG Pipeline | Bedrock Knowledge Bases + OpenSearch Serverless | Clinical trial matching with Titan Embeddings |
+| Compute | AWS Lambda x5 (Python 3.12) | API + Agent Invoker + Tool Executor + Trial Fetcher + Visit API |
+| API | Amazon API Gateway (REST) | HTTPS endpoint with CORS |
+| Frontend | Amazon S3 + CloudFront | Static hosting with CDN and HTTPS |
+| Database | Amazon DynamoDB x2 tables | Response cache + Patient visits |
+| Auth | Amazon Cognito Identity Pool | Browser-to-Transcribe Medical access |
+| Speech | Amazon Transcribe Medical | Real-time clinical speech-to-text |
+| Scheduler | Amazon EventBridge | Daily clinical trial data refresh |
+| IaC | AWS CloudFormation | Infrastructure as Code |
 
 ---
 
-## STEP 2: Create Lambda Function (5 min)
+## Deployment Steps
 
-### 2a. Create the function
+### Step 1: Configure GitHub Secrets
 
-1. **AWS Console** → search **"Lambda"** → **Create function**
-2. Fill in:
-   - Function name: `ClinicalSetu-API`
-   - Runtime: **Python 3.12**
-   - Architecture: **x86_64**
-   - Permissions: **Create a new role with basic Lambda permissions**
-3. Click **Create function**
+1. Go to your GitHub repository → **Settings** → **Secrets and variables** → **Actions**
+2. Add these repository secrets:
+   - `AWS_ACCESS_KEY_ID`
+   - `AWS_SECRET_ACCESS_KEY`
 
-### 2b. Upload code
-
-1. On the function page, click **Upload from** → **.zip file**
-2. Upload: `lambda_deployment.zip` (13 KB, in your project root)
-3. Click **Save**
-
-### 2c. Set handler (IMPORTANT)
-
-1. In the **Code** tab, scroll down to **Runtime settings** → click **Edit**
-2. Handler: `lambda_function.lambda_handler`
-3. Click **Save**
-
-### 2d. Set timeout and memory
-
-1. Go to **Configuration** tab → **General configuration** → **Edit**
-2. Memory: **1024 MB**
-3. Timeout: **2 min 0 sec**
-4. Click **Save**
-
-### 2e. Add Bedrock permission
-
-1. Go to **Configuration** tab → **Permissions**
-2. Click the **Role name** link (opens IAM in a new tab)
-3. Click **Add permissions** → **Create inline policy**
-4. Click **JSON** tab, paste:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": "bedrock:InvokeModel",
-      "Resource": "arn:aws:bedrock:us-east-1::foundation-model/*"
-    }
-  ]
-}
-```
-
-5. Click **Next** → Policy name: `BedrockAccess` → **Create policy**
-
-### 2f. Test it (optional but recommended)
-
-1. Go back to Lambda → **Test** tab
-2. Create test event with this JSON:
-
-```json
-{
-  "body": "{\"consultation_text\":\"Patient John, 45M, presents with headache for 2 days. BP 140/90. Prescribed paracetamol.\",\"patient\":{\"name\":\"John\",\"age\":45,\"gender\":\"Male\"},\"doctor\":{\"name\":\"Dr. Test\",\"speciality\":\"General Medicine\",\"hospital\":\"Test Hospital\"},\"referral_reason\":null,\"specialist_type\":null}"
-}
-```
-
-3. Click **Test** — should return statusCode 200 with SOAP note, summary, trials
-4. Takes ~30-60 seconds on first run
-
----
-
-## STEP 3: Create API Gateway (5 min)
-
-### 3a. Create the API
-
-1. **AWS Console** → search **"API Gateway"** → **Create API**
-2. Choose **REST API** (NOT HTTP API, NOT private) → **Build**
-3. Settings:
-   - Protocol: REST
-   - Create new API: **New API**
-   - API name: `ClinicalSetu-API`
-4. Click **Create API**
-
-### 3b. Create resources
-
-1. Click **Actions** → **Create Resource**
-   - Resource name: `api`
-   - Check ✅ **Enable API Gateway CORS**
-   - Click **Create Resource**
-2. Select `/api`, click **Actions** → **Create Resource**
-   - Resource name: `process`
-   - Check ✅ **Enable API Gateway CORS**
-   - Click **Create Resource**
-
-### 3c. Create POST method
-
-1. Select `/api/process`
-2. Click **Actions** → **Create Method** → choose **POST** → click the ✓ checkmark
-3. Integration type: **Lambda Function**
-4. Check ✅ **Use Lambda Proxy integration**
-5. Lambda Function: `ClinicalSetu-API`
-6. Click **Save** → **OK** on the permission popup
-
-### 3d. Enable CORS on POST
-
-1. Select `/api/process`
-2. Click **Actions** → **Enable CORS**
-3. Leave defaults (all origins, all headers)
-4. Click **Enable CORS and replace existing CORS headers** → **Yes, replace**
-
-### 3e. Deploy the API
-
-1. Click **Actions** → **Deploy API**
-2. Deployment stage: **[New Stage]**
-3. Stage name: `prod`
-4. Click **Deploy**
-
-### 3f. Copy the invoke URL
-
-You'll see something like:
-
-```
-Invoke URL: https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/prod
-```
-
-**Save this URL** — you need it for Step 4.
-
-Your full API endpoint will be:
-```
-https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/prod/api/process
-```
-
----
-
-## STEP 4: Deploy Frontend to Amplify (5 min)
-
-### 4a. Push code to GitHub first
+### Step 2: Push to Main Branch
 
 ```bash
-cd c:/Users/Admin/Desktop/Hackathons/AI-for-Bharat-AWS
-git add -A
-git commit -m "Deploy-ready: professional UI + Lambda package"
 git push origin main
 ```
 
-### 4b. Create Amplify app
+This triggers the GitHub Actions workflow (`.github/workflows/deploy.yml`) which:
 
-1. **AWS Console** → search **"AWS Amplify"** → **New app** → **Host web app**
-2. Source: **GitHub** → **Continue**
-3. Authorize AWS Amplify if prompted
-4. Select your repository + branch `main`
-5. Click **Next**
+1. **Fetches clinical trial data** from ClinicalTrials.gov
+2. **Packages Lambda functions** into deployment ZIPs
+3. **Uploads ZIPs** to S3
+4. **Deploys CloudFormation stack** — creates all AWS resources
+5. **Sets up Multi-Agent Collaboration** (one-time, idempotent):
+   - Creates IAM role with `AmazonBedrockFullAccess`
+   - Provisions 4 collaborator agents (SOAP, Summary, Referral, Trial)
+   - Provisions 1 supervisor agent with collaborator associations
+   - Creates production aliases for all agents
+   - Updates Agent Invoker Lambda with agent IDs
+6. **Sets up Knowledge Base** (one-time, idempotent):
+   - Creates OpenSearch Serverless collection + vector index
+   - Creates Bedrock Knowledge Base with Titan Embeddings V2
+   - Syncs clinical trial data
+7. **Seeds synthetic visit data** into DynamoDB (one-time)
+8. **Builds React frontend** with environment variables injected
+9. **Syncs frontend to S3** + invalidates CloudFront cache
 
-### 4c. Configure build settings
+### Step 3: Monitor Deployment
 
-1. App name: `ClinicalSetu`
-2. Click **Edit** on the build spec and replace with:
+- Go to GitHub → **Actions** tab → click the running workflow
+- Full deployment takes ~8-12 minutes
+- The deployment summary shows all deployed services
 
-```yaml
-version: 1
-applications:
-  - frontend:
-      phases:
-        preBuild:
-          commands:
-            - npm ci
-        build:
-          commands:
-            - npm run build
-      artifacts:
-        baseDirectory: dist
-        files:
-          - '**/*'
-      cache:
-        paths:
-          - node_modules/**/*
-    appRoot: frontend
-```
+### Step 4: Skip One-Time Steps on Subsequent Deploys
 
-3. Click **Next**
+After first successful deployment, set these GitHub repository **Variables** (not Secrets) to skip one-time setup:
 
-### 4d. Add environment variable
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `MULTI_AGENT_SETUP_DONE` | `true` | Skip agent provisioning |
+| `KNOWLEDGE_BASE_SETUP_DONE` | `true` | Skip KB + OpenSearch setup |
+| `SEED_DATA_DONE` | `true` | Skip synthetic data seeding |
 
-1. Expand **Advanced settings** → **Environment variables**
-2. Add:
-   - Key: `VITE_API_URL`
-   - Value: `https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/prod` (your API Gateway URL from Step 3f)
-
-### 4e. Deploy
-
-1. Click **Save and deploy**
-2. Wait ~2-3 minutes for build
-3. You'll get a live URL like: `https://main.xxxxxxxxxx.amplifyapp.com`
+Set at: Repository → Settings → Secrets and variables → Actions → Variables
 
 ---
 
-## STEP 5: Test End-to-End (2 min)
+## Architecture
 
-1. Open the Amplify URL in your browser
-2. Select a doctor profile (Dr. Ananya or Dr. Suresh)
-3. Click any sample case to load it
-4. Click **"Process with AI"**
-5. Wait ~30-60 seconds for all 4 outputs
-6. Verify:
-   - [ ] SOAP Note tab shows structured data with confidence scores
-   - [ ] Patient Summary tab shows plain-language summary
-   - [ ] Referral Letter tab shows referral (if case has one) or "No referral indicated"
-   - [ ] Trial Matches tab shows matched clinical trials
-   - [ ] "AI-Generated" disclaimer appears on every tab
-   - [ ] No console errors (F12 → Console)
+```
+User Browser
+    ↓
+CloudFront (CDN + HTTPS)
+    ↓
+S3 (React SPA)
+    ↓ POST /api/process-agent
+API Gateway (REST, CORS)
+    ↓ Lambda Proxy
+Agent Invoker Lambda
+    ↓ bedrock:InvokeAgent
+Supervisor Agent (Bedrock Multi-Agent Collaboration)
+    ├── SOAPAgent → Tool Executor Lambda → Bedrock Converse (Nova Lite)
+    ├── SummaryAgent → Tool Executor Lambda → Bedrock Converse (Nova Lite)
+    ├── ReferralAgent → Tool Executor Lambda → Bedrock Converse (Nova Lite)
+    └── TrialAgent → Tool Executor Lambda → Bedrock Converse (Nova Lite) + Knowledge Base RAG
+```
+
+---
+
+## IAM Roles (created automatically)
+
+| Role | Purpose |
+|------|---------|
+| `clinicalsetu-lambda-role-prod` | Lambda execution role for tool executor + other Lambdas (Bedrock Converse + DynamoDB + inference profiles) |
+| `clinicalsetu-agent-invoker-role-prod` | Agent Invoker Lambda role (bedrock:InvokeAgent + Converse + inference profiles) |
+| `ClinicalSetu-MultiAgentRole` | Bedrock Agent service role (AmazonBedrockFullAccess + Lambda invoke + KB access) |
+
+---
+
+## Testing
+
+### Quick Test via API
+
+```bash
+curl -X POST https://YOUR-API-GATEWAY-URL/prod/api/process-agent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "consultation_text": "Patient Ravi Kumar, 45M, headache 2 days. No fever. BP 130/80. Prescribed paracetamol 500mg TDS x3 days.",
+    "patient": {"name": "Ravi Kumar", "age": 45, "gender": "Male", "patient_id": "TEST-001"},
+    "doctor": {"name": "Dr. Sharma", "speciality": "General Medicine", "hospital": "City Hospital"}
+  }'
+```
+
+### Debug Multi-Agent Issues
+
+If agents aren't working, run the diagnostic script:
+
+```bash
+pip install boto3
+python scripts/debug_agents.py
+```
+
+This performs 11 checks: AWS connectivity, agent inventory, aliases, IAM permissions, collaborator associations, Lambda resource policies, model access, and end-to-end invocation tests.
 
 ---
 
 ## Troubleshooting
 
-### Lambda returns timeout error
-- Increase timeout to 2 minutes (Configuration → General configuration)
-- Increase memory to 1024 MB
-- Bedrock calls can take 15-30 seconds each, x4 = up to 120 seconds total
+### `accessDeniedException` on InvokeAgent
+- **Cause**: Lambda execution role missing permissions or agent service role missing inference profile ARNs
+- **Fix**: The CloudFormation template includes all required permissions including `inference-profile/*` ARNs. Re-deploy the stack.
 
-### Lambda returns "AccessDeniedException" for Bedrock
-- Check the IAM inline policy is attached (Step 2e)
-- Make sure the Resource ARN uses `us-east-1` and has `/*` at the end
-- Make sure you're in us-east-1 region
+### SOAP Note generation returns empty
+- **Cause**: Tool Executor Lambda's IAM role needs `bedrock:Converse` on both `foundation-model/*` AND `inference-profile/*` resources (Nova Lite uses cross-region inference profiles)
+- **Fix**: CloudFormation template includes these. Re-deploy.
 
-### API Gateway returns CORS error
-- Re-do Step 3d (Enable CORS)
-- Make sure you deployed after enabling CORS (Step 3e)
-- Check that the frontend VITE_API_URL doesn't have a trailing slash
+### Supervisor responds but no tool outputs
+- **Cause**: The invoke_agent Lambda must parse `collaboratorInvocationOutput` from the Bedrock trace (not just `actionGroupInvocationOutput`)
+- **Fix**: Already handled in `invoke_agent.py`
 
-### Amplify build fails
-- Check that appRoot is set to `frontend`
-- Check that the build spec YAML is correct (Step 4c)
-- Check the build logs in Amplify console for specific errors
+### Multi-agent returns error
+- Check Agent Invoker Lambda environment variables: `BEDROCK_AGENT_ID` and `BEDROCK_AGENT_ALIAS_ID` must be set
+- Run `debug_agents.py` to diagnose
+- Check Lambda Function URL is configured (bypasses API Gateway 29s timeout)
 
-### Frontend loads but API calls fail
-- Check browser console (F12) for the exact error
-- Verify VITE_API_URL environment variable in Amplify matches your API Gateway URL
-- Test the API Gateway URL directly with curl:
-  ```bash
-  curl -X POST https://YOUR-API-URL/prod/api/process \
-    -H "Content-Type: application/json" \
-    -d '{"consultation_text":"Test","patient":{"name":"Test","age":30,"gender":"Male"},"doctor":{"name":"Dr. Test","speciality":"GM","hospital":"H"}}'
-  ```
-
-### Bedrock model not available
-- Go to Bedrock Console → Model access
-- Make sure Claude 3 Sonnet is enabled
-- If you see a form, fill it out — approval is usually instant
-
----
-
-## Architecture (for reference)
-
-```
-User Browser
-    ↓
-AWS Amplify (React frontend)
-    ↓ POST /api/process
-API Gateway (REST, CORS enabled)
-    ↓ Lambda Proxy
-Lambda: ClinicalSetu-API (Python 3.12)
-    ↓ bedrock:InvokeModel (x4 calls)
-Amazon Bedrock (Claude 3 Sonnet)
-    → SOAP Note
-    → Patient Summary
-    → Referral Letter
-    → Clinical Trial Matches
-```
+### CORS errors
+- API Gateway CORS is configured in CloudFormation
+- Lambda responses include CORS headers
+- Check that frontend `VITE_API_URL` doesn't have a trailing slash
 
 ---
 
@@ -317,12 +209,32 @@ Amazon Bedrock (Claude 3 Sonnet)
 
 | Service | Estimated Cost |
 |---------|---------------|
-| Lambda | Free tier (1M requests/month) |
+| Lambda x5 | Free tier (1M requests/month) |
 | API Gateway | Free tier (1M calls/month) |
-| Amplify | Free tier (build + hosting) |
-| Bedrock (Claude 3 Sonnet) | ~$0.30-0.50 per consultation |
-| S3 | Free tier |
-| **Total for ~30 test runs** | **~$10-15** |
+| S3 + CloudFront | Free tier |
+| DynamoDB | Free tier (PAY_PER_REQUEST, 25GB) |
+| Bedrock (Nova Lite) | ~$0.003-0.01 per consultation |
+| OpenSearch Serverless | ~$0.24/hr per OCU (2 OCUs minimum when active) |
+| Cognito | Free tier |
+| EventBridge | Free tier |
+| **Total for ~30 test runs** | **~$5-10** |
+
+---
+
+## Local Development
+
+```bash
+# Backend
+cd backend
+pip install boto3
+python local_server.py    # Runs on localhost:3001
+
+# Frontend
+cd frontend
+npm install
+cp .env.example .env      # Edit VITE_API_URL to localhost:3001
+npm run dev                # Runs on localhost:5173
+```
 
 ---
 
@@ -330,8 +242,13 @@ Amazon Bedrock (Claude 3 Sonnet)
 
 | File | Purpose |
 |------|---------|
-| `lambda_deployment.zip` | Upload to Lambda (contains handler + prompts + trial data) |
-| `scripts/package_lambda.py` | Re-generates the ZIP if you change code |
-| `frontend/.env` | Local dev only (points to localhost:3001) |
-| `frontend/.env.example` | Template showing what env vars are available |
-| `backend/local_server.py` | Local testing server (not deployed) |
+| `infrastructure/cloudformation.yaml` | All AWS resources (IaC) |
+| `.github/workflows/deploy.yml` | CI/CD pipeline |
+| `scripts/setup_multi_agent.py` | Provisions Bedrock agents (run by CI/CD) |
+| `scripts/setup_knowledge_base.py` | Sets up RAG pipeline (run by CI/CD) |
+| `scripts/package_lambda.py` | Packages Lambda ZIPs (run by CI/CD) |
+| `scripts/debug_agents.py` | 11-point diagnostic for multi-agent debugging |
+| `scripts/seed_visits.py` | Seeds synthetic visit data |
+| `backend/lambda/invoke_agent.py` | Multi-agent invoker + collaborator output parsing |
+| `backend/lambda/agent_tool_executor.py` | Shared tool executor for all collaborator agents |
+| `backend/lambda/process_consultation.py` | Standalone handler (Converse API + caching) |

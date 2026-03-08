@@ -31,7 +31,7 @@ Every output is **editable** by the doctor, shows **confidence scores**, and inc
 
 ---
 
-## AWS Architecture (12 Services — All Deployed)
+## AWS Architecture (13 Services — All Deployed)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -41,7 +41,7 @@ Every output is **editable** by the doctor, shows **confidence scores**, and inc
 │                                                                  │
 │  ┌───────────┐  ┌──────────┐  ┌──────────────┐  ┌────────────┐ │
 │  │CloudFront │  │   S3     │  │ API Gateway  │  │  Lambda    │ │
-│  │  (CDN)    │─►│(Frontend)│  │  (REST API)  │─►│  x4        │ │
+│  │  (CDN)    │─►│(Frontend)│  │  (REST API)  │─►│  x5        │ │
 │  │  HTTPS    │  │          │  │  + CORS      │  │  Python    │ │
 │  └───────────┘  └──────────┘  └──────────────┘  └─────┬──────┘ │
 │                                                         │        │
@@ -50,7 +50,7 @@ Every output is **editable** by the doctor, shows **confidence scores**, and inc
 │  ┌────────────┐ ┌──────────┐ ┌──────────────┐ ┌──────────────┐ │
 │  │  Bedrock   │ │ DynamoDB │ │ Bedrock      │ │ Bedrock      │ │
 │  │  Nova Lite │ │ x2 Tables│ │ Multi-Agent  │ │ Knowledge    │ │
-│  │  + Haiku   │ │ Cache +  │ │ Collaboration│ │ Bases (RAG)  │ │
+│  │  + Micro   │ │ Cache +  │ │ Collaboration│ │ Bases (RAG)  │ │
 │  │ (fallback) │ │ Visits   │ │ Supervisor + │ │ Clinical     │ │
 │  │            │ │          │ │ 4 Specialists│ │ Trials       │ │
 │  └────────────┘ └──────────┘ └──────────────┘ └──────────────┘ │
@@ -64,10 +64,10 @@ Every output is **editable** by the doctor, shows **confidence scores**, and inc
 
 | Service | Purpose |
 |---------|---------|
-| **Amazon Bedrock** (Nova Lite + Claude Haiku) | Core AI engine — Converse API with model fallback chain |
+| **Amazon Bedrock** (Nova Lite + Nova Micro) | Core AI engine — Converse API with cross-region inference profiles and model fallback chain |
 | **Bedrock Multi-Agent Collaboration** | Supervisor-Router pattern: 1 supervisor + 4 specialist agents |
 | **Bedrock Knowledge Bases** | RAG pipeline for clinical trial matching (ClinicalTrials.gov real data, Titan Embeddings, OpenSearch Serverless) |
-| **AWS Lambda** (Python 3.12, x4) | Monolithic handler + Agent Invoker + Tool Executor + Visit API |
+| **AWS Lambda** (Python 3.12, x5) | Agent Invoker + Tool Executor + Trial Fetcher + Visit API + Translate |
 | **Amazon API Gateway** (REST) | Unified API with CORS (`/api/process`, `/api/process-agent`, `/api/translate`, `/api/save-visit`, `/api/patient-visits`) |
 | **Amazon S3** | Frontend static hosting + Lambda deployment packages |
 | **Amazon CloudFront** | CDN with HTTPS, SPA error routing |
@@ -75,17 +75,21 @@ Every output is **editable** by the doctor, shows **confidence scores**, and inc
 | **Amazon OpenSearch Serverless** | Vector store for clinical trial embeddings (used by Knowledge Bases) |
 | **Amazon Cognito** | Identity Pool for secure browser-to-AWS Transcribe access |
 | **Amazon Transcribe Medical** | Real-time clinical speech-to-text streaming |
+| **Amazon EventBridge** | Scheduled daily clinical trial data refresh from ClinicalTrials.gov |
 | **AWS CloudFormation** | Infrastructure as Code — entire stack in one template |
 
 ### CI/CD
 
 Push to `main` triggers GitHub Actions which:
-1. Packages Lambda functions (including visit API)
-2. Uploads to S3
-3. Deploys CloudFormation stack (creates/updates all services)
-4. Sets up Bedrock Knowledge Base + Multi-Agent collaboration
-5. Builds React frontend with API URL injected
-6. Syncs to S3 + invalidates CloudFront cache
+1. Fetches latest clinical trial data from ClinicalTrials.gov
+2. Packages Lambda functions into deployment ZIPs
+3. Uploads to S3
+4. Deploys CloudFormation stack (creates/updates all 13 services)
+5. Sets up Bedrock Multi-Agent Collaboration (Supervisor + 4 specialists with IAM roles, action groups, aliases)
+6. Sets up Bedrock Knowledge Base + OpenSearch Serverless for RAG
+7. Seeds synthetic visit data into DynamoDB
+8. Builds React frontend with API URL + Cognito pool ID injected
+9. Syncs to S3 + invalidates CloudFront cache
 
 ---
 
@@ -95,12 +99,13 @@ Push to `main` triggers GitHub Actions which:
 - **RAG Pipeline for Trial Matching** — Real clinical trial data from ClinicalTrials.gov, embedded with Amazon Titan Embeddings, stored in OpenSearch Serverless, queried via Bedrock Knowledge Bases for semantic trial matching with confidence scores.
 - **Patient Data Persistence** — DynamoDB visits table with composite keys (`HOSPITAL#<hospital>#PHONE#<phone>` PK, `VISIT#<timestamp>` SK) for multi-tenant isolation. Global Secondary Index on phone number enables cross-hospital patient queries.
 - **Patient Portal with Phone+OTP Login** — Patients authenticate with phone number + OTP, view visit history from any hospital/clinic that used ClinicalSetu. Visit details include diagnosis, medications, follow-up instructions, and warning signs.
-- **Bedrock Converse API** — Model-agnostic; works with Nova Lite and Claude Haiku without format changes
+- **Bedrock Converse API** — Model-agnostic; works with Nova Lite and Nova Micro via cross-region inference profiles
 - **Retry with exponential backoff + jitter** — 3 retries per model, handles Bedrock throttling
-- **Model fallback chain** — Nova Lite (primary) → Claude Haiku (auto-failover if throttled)
-- **Multi-agent → Monolithic fallback** — If multi-agent times out, auto-falls back to monolithic pipeline
+- **Model fallback chain** — Nova Lite (primary) → Nova Micro (auto-failover if throttled)
+- **Lambda Function URL** — Bypasses API Gateway 29s timeout; supports long-running multi-agent orchestration
 - **Partial result handling** — Each AI step is isolated; one failure doesn't block other outputs
 - **DynamoDB response caching** — SHA-256 hash of input, 24h TTL, fail-safe (cache errors never break main flow)
+- **EventBridge scheduled trial refresh** — Daily automated ClinicalTrials.gov data sync with Knowledge Base re-indexing
 - **Amazon Transcribe Medical** — Real-time streaming via Cognito unauthenticated identity, clinical vocabulary optimized
 - **9 Indian language translation** — On-demand via Bedrock, available on all output tabs
 
@@ -145,11 +150,11 @@ ClinicalSetu is **NOT a diagnostic tool**. It is a **documentation assistant**.
 ```
 ├── backend/
 │   ├── lambda/
-│   │   ├── process_consultation.py    # Monolithic handler (Converse API + caching)
-│   │   ├── invoke_agent.py            # Multi-agent invoker (Supervisor Agent)
-│   │   ├── agent_tool_executor.py     # Tool executor (called by collaborator agents)
+│   │   ├── process_consultation.py    # Standalone handler (Converse API + caching)
+│   │   ├── invoke_agent.py            # Multi-agent invoker (Supervisor Agent + collaborator output parsing)
+│   │   ├── agent_tool_executor.py     # Tool executor (called by collaborator agents via action groups)
 │   │   ├── visit_api.py               # Patient visit persistence (save/fetch from DynamoDB)
-│   │   └── fetch_trials.py            # ClinicalTrials.gov data fetcher
+│   │   └── fetch_trials.py            # ClinicalTrials.gov data fetcher + Knowledge Base sync
 │   ├── prompts/                       # Prompt templates for each output
 │   └── local_server.py               # Local dev server
 ├── frontend/
@@ -173,8 +178,10 @@ ClinicalSetu is **NOT a diagnostic tool**. It is a **documentation assistant**.
 │   └── deploy.yml                     # CI/CD pipeline
 ├── scripts/
 │   ├── setup_multi_agent.py           # Provisions 5 Bedrock agents (supervisor + 4 specialists)
-│   ├── setup_knowledge_base.py        # Sets up RAG pipeline (OpenSearch + Knowledge Base)
+│   ├── setup_knowledge_base.py        # Sets up RAG pipeline (OpenSearch Serverless + Knowledge Base)
 │   ├── package_lambda.py              # Lambda packaging script
+│   ├── seed_visits.py                 # Seeds synthetic visit data into DynamoDB
+│   ├── debug_agents.py                # 11-point diagnostic script for multi-agent debugging
 │   └── setup_bedrock_agent.py         # Legacy single-agent setup
 └── docs/
     ├── design.md                      # Enterprise architecture design
@@ -227,11 +234,12 @@ Required GitHub Secrets:
 
 ## Cost Efficiency
 
-- **Amazon Nova Lite** as primary model — ~80% cheaper than Claude Sonnet
+- **Amazon Nova Lite** as primary model — ~80% cheaper than Claude Sonnet, cross-region inference profiles for high availability
+- **Amazon Nova Micro** as fallback — automatic failover on throttling, even cheaper
 - **DynamoDB PAY_PER_REQUEST** — pay only for what you use, 25GB free tier
 - **Response caching** — repeat consultations hit cache, zero Bedrock cost
 - **Serverless everything** — zero cost when idle
-- Estimated cost per consultation: **$0.003-0.01** (5 Bedrock calls)
+- Estimated cost per consultation: **$0.003-0.01** (multi-agent orchestration with 5 specialist tool calls)
 
 ---
 

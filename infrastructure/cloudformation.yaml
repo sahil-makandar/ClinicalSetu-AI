@@ -257,7 +257,7 @@ Resources:
         S3Bucket: !Ref LambdaS3Bucket
         S3Key: !Ref AgentLambdaS3Key
       Role: !GetAtt LambdaExecutionRole.Arn
-      Timeout: 60
+      Timeout: 120
       MemorySize: 512
       Environment:
         Variables:
@@ -295,6 +295,29 @@ Resources:
       Tags:
         - Key: Project
           Value: !Ref ProjectName
+
+  # Lambda Function URL for Agent Invoker (bypasses API Gateway 29s timeout)
+  AgentInvokerFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !Ref AgentInvokerFunction
+      Cors:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+
+  AgentInvokerFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AgentInvokerFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+      FunctionUrlAuthType: NONE
 
   # IAM Role for Agent Invoker Lambda (needs bedrock:InvokeAgent)
   AgentInvokerRole:
@@ -951,6 +974,10 @@ Outputs:
   AgentInvokerFunctionArn:
     Description: Agent Invoker Lambda ARN
     Value: !GetAtt AgentInvokerFunction.Arn
+
+  AgentInvokerFunctionUrlEndpoint:
+    Description: Lambda Function URL for Agent Invoker (no timeout limit)
+    Value: !GetAtt AgentInvokerFunctionUrl.FunctionUrl
 
   ApiProcessAgentEndpoint:
     Description: Full URL for the /api/process-agent endpoint (multi-agent)
