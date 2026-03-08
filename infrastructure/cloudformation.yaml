@@ -296,29 +296,6 @@ Resources:
         - Key: Project
           Value: !Ref ProjectName
 
-  # Lambda Function URL for Agent Invoker (bypasses API Gateway 29s timeout)
-  AgentInvokerFunctionUrl:
-    Type: AWS::Lambda::Url
-    Properties:
-      AuthType: NONE
-      TargetFunctionArn: !Ref AgentInvokerFunction
-      Cors:
-        AllowOrigins:
-          - '*'
-        AllowMethods:
-          - POST
-          - OPTIONS
-        AllowHeaders:
-          - Content-Type
-
-  AgentInvokerFunctionUrlPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref AgentInvokerFunction
-      Action: lambda:InvokeFunctionUrl
-      Principal: '*'
-      FunctionUrlAuthType: NONE
-
   # IAM Role for Agent Invoker Lambda (needs bedrock:InvokeAgent)
   AgentInvokerRole:
     Type: AWS::IAM::Role
@@ -974,10 +951,6 @@ Outputs:
   AgentInvokerFunctionArn:
     Description: Agent Invoker Lambda ARN
     Value: !GetAtt AgentInvokerFunction.Arn
-
-  AgentInvokerFunctionUrlEndpoint:
-    Description: Lambda Function URL for Agent Invoker (no timeout limit)
-    Value: !GetAtt AgentInvokerFunctionUrl.FunctionUrl
 
   ApiProcessAgentEndpoint:
     Description: Full URL for the /api/process-agent endpoint (multi-agent)
