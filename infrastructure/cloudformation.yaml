@@ -127,6 +127,19 @@ Resources:
                   - dynamodb:DescribeTable
                 Resource:
                   - !GetAtt CacheTable.Arn
+        - PolicyName: DynamoDBVisitsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:DescribeTable
+                Resource:
+                  - !GetAtt VisitsTable.Arn
+                  - !Sub '${VisitsTable.Arn}/index/*'
 
   # ----------------------------------------------------------
   # DynamoDB Table - Response Cache (25GB always free tier)
@@ -257,9 +270,11 @@ Resources:
       Environment:
         Variables:
           AWS_REGION_NAME: !Ref AWS::Region
+          AWS_REGION: !Ref AWS::Region
           BEDROCK_AGENT_ID: !Ref BedrockAgentId
           BEDROCK_AGENT_ALIAS_ID: !Ref BedrockAgentAliasId
           BEDROCK_MODEL_ID: !Ref BedrockModelId
+          DYNAMODB_CACHE_TABLE: !Ref CacheTable
       Tags:
         - Key: Project
           Value: !Ref ProjectName
@@ -290,10 +305,17 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
                   - bedrock:Converse
+                  - bedrock:ConverseStream
                 Resource:
                   - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
                   - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/*'
+              - Effect: Allow
+                Action:
+                  - bedrock:Retrieve
+                  - bedrock:RetrieveAndGenerate
+                Resource: '*'
               - Effect: Allow
                 Action:
                   - dynamodb:GetItem
@@ -404,6 +426,7 @@ Resources:
       Environment:
         Variables:
           VISITS_TABLE: !Ref VisitsTable
+          AWS_REGION_NAME: !Ref AWS::Region
       Tags:
         - Key: Project
           Value: !Ref ProjectName
