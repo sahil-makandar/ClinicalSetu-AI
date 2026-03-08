@@ -431,7 +431,6 @@ jobs:
         working-directory: frontend
         env:
           VITE_API_URL: ${{ steps.stack.outputs.api_url }}
-          VITE_AGENT_FUNCTION_URL: ${{ steps.stack.outputs.agent_function_url }}
           VITE_COGNITO_IDENTITY_POOL_ID: ${{ steps.stack.outputs.cognito_pool_id }}
           VITE_AWS_REGION: ${{ env.AWS_REGION }}
         run: npm run build
