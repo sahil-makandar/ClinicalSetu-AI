@@ -232,7 +232,15 @@ jobs:
               KnowledgeBaseId="${{ vars.KNOWLEDGE_BASE_ID || '' }}" \
               TrialsBucket="${{ vars.TRIALS_BUCKET || '' }}" \
               DataSourceId="${{ vars.DATA_SOURCE_ID || '' }}" \
-            --no-fail-on-empty-changeset
+            --no-fail-on-empty-changeset || {
+            echo "CloudFormation deployment failed. Fetching error details..."
+            aws cloudformation describe-stack-events \
+              --stack-name ${{ env.STACK_NAME }} \
+              --max-items 20 \
+              --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED'].{Time:Timestamp,Resource:LogicalResourceId,Status:ResourceStatus,Reason:ResourceStatusReason}" \
+              --output table
+            exit 1
+          }
 
       # ----- Step 4.5: Setup Multi-Agent (one-time, idempotent) -----
       - name: Setup Bedrock Multi-Agent Collaboration
