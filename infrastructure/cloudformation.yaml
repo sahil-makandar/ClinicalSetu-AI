@@ -86,7 +86,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-lambda-role-${Stage}-${AWS::AccountId}'
+      RoleName: !Sub '${ProjectName}-lambda-role-${Stage}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -293,7 +293,7 @@ Resources:
   AgentInvokerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-agent-invoker-role-${Stage}-${AWS::AccountId}'
+      RoleName: !Sub '${ProjectName}-agent-invoker-role-${Stage}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -368,7 +368,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: HasTrialsBucket
     Properties:
-      RoleName: !Sub '${ProjectName}-trial-fetcher-role-${Stage}-${AWS::AccountId}'
+      RoleName: !Sub '${ProjectName}-trial-fetcher-role-${Stage}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -833,7 +833,7 @@ Resources:
   TranscribeUnauthRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-transcribe-unauth-${Stage}-${AWS::AccountId}'
+      RoleName: !Sub '${ProjectName}-transcribe-unauth-${Stage}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
