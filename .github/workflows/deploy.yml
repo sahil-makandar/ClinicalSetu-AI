@@ -234,11 +234,13 @@ jobs:
               DataSourceId="${{ vars.DATA_SOURCE_ID || '' }}" \
             --no-fail-on-empty-changeset || {
             echo "=== CloudFormation deployment failed ==="
-            echo "Fetching last 30 stack events..."
+            echo "Fetching ALL stack events (last 100)..."
             aws cloudformation describe-stack-events \
               --stack-name ${{ env.STACK_NAME }} \
-              --max-items 30 \
-              --output table || echo "Could not fetch events"
+              --max-items 100 | grep -A 5 -B 5 "CREATE_FAILED\|UPDATE_FAILED" || \
+            aws cloudformation describe-stack-events \
+              --stack-name ${{ env.STACK_NAME }} \
+              --max-items 50
             exit 1
           }
 
