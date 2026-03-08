@@ -74,6 +74,36 @@ jobs:
           aws s3 cp lambda_deployment.zip "s3://${{ env.LAMBDA_BUCKET }}/lambda_deployment.zip"
           aws s3 cp agent_lambda_deployment.zip "s3://${{ env.LAMBDA_BUCKET }}/agent_lambda_deployment.zip"
 
+      # ----- Step 3.5: Handle failed stack state -----
+      - name: Continue rollback if stack is in failed state
+        run: |
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].StackStatus" \
+            --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+          
+          echo "Current stack status: $STACK_STATUS"
+          
+          if [ "$STACK_STATUS" = "UPDATE_ROLLBACK_FAILED" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ]; then
+            echo "Stack is in failed state. Attempting to continue rollback..."
+            aws cloudformation continue-update-rollback --stack-name ${{ env.STACK_NAME }} || true
+            
+            # Wait for rollback to complete
+            echo "Waiting for rollback to complete..."
+            aws cloudformation wait stack-rollback-complete --stack-name ${{ env.STACK_NAME }} || true
+            
+            # Delete the stack if rollback succeeded
+            echo "Deleting failed stack..."
+            aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }}
+            aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} || true
+            echo "Stack deleted. Will create fresh stack."
+          elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
+            echo "Stack is in ROLLBACK_COMPLETE state. Deleting..."
+            aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }}
+            aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }}
+            echo "Stack deleted. Will create fresh stack."
+          fi
+
       # ----- Step 4: Deploy CloudFormation -----
       - name: Deploy CloudFormation stack
         run: |
