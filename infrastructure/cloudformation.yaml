@@ -512,6 +512,15 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  # Lambda permission for Bedrock Agent to invoke Tool Executor
+  BedrockAgentToolExecutorPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ToolExecutorFunction
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
   # Lambda permission for API Gateway to invoke Agent Invoker
   AgentInvokerApiGatewayPermission:
     Type: AWS::Lambda::Permission
