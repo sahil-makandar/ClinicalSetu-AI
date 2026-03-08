@@ -87,21 +87,47 @@ jobs:
           if [ "$STACK_STATUS" = "UPDATE_ROLLBACK_FAILED" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ]; then
             echo "Stack is in failed state. Attempting to continue rollback..."
             aws cloudformation continue-update-rollback --stack-name ${{ env.STACK_NAME }} || true
-            
+
             # Wait for rollback to complete
             echo "Waiting for rollback to complete..."
-            aws cloudformation wait stack-rollback-complete --stack-name ${{ env.STACK_NAME }} || true
-            
-            # Delete the stack if rollback succeeded
-            echo "Deleting failed stack..."
+            aws cloudformation wait stack-rollback-complete --stack-name ${{ env.STACK_NAME }} 2>/dev/null || true
+
+            # Re-check status after rollback attempt
+            STACK_STATUS=$(aws cloudformation describe-stacks \
+              --stack-name ${{ env.STACK_NAME }} \
+              --query "Stacks[0].StackStatus" \
+              --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+            echo "Status after rollback attempt: $STACK_STATUS"
+          fi
+
+          # Handle any deletable state (ROLLBACK_COMPLETE, DELETE_FAILED, *_FAILED)
+          if [[ "$STACK_STATUS" == "ROLLBACK_COMPLETE" ]] || [[ "$STACK_STATUS" == *"_FAILED" ]]; then
+            echo "Stack in state $STACK_STATUS. Deleting..."
             aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }}
-            aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} || true
-            echo "Stack deleted. Will create fresh stack."
-          elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
-            echo "Stack is in ROLLBACK_COMPLETE state. Deleting..."
-            aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }}
-            aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }}
-            echo "Stack deleted. Will create fresh stack."
+            aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} 2>/dev/null || true
+
+            # Check if delete succeeded
+            STACK_STATUS=$(aws cloudformation describe-stacks \
+              --stack-name ${{ env.STACK_NAME }} \
+              --query "Stacks[0].StackStatus" \
+              --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+
+            if [ "$STACK_STATUS" = "DELETE_FAILED" ]; then
+              echo "Normal delete failed. Retrying with --retain-resources for stuck resources..."
+              # Get resources that failed to delete
+              FAILED_RESOURCES=$(aws cloudformation describe-stack-resources \
+                --stack-name ${{ env.STACK_NAME }} \
+                --query "StackResources[?ResourceStatus=='DELETE_FAILED'].LogicalResourceId" \
+                --output text 2>/dev/null || echo "")
+              echo "Retaining stuck resources: $FAILED_RESOURCES"
+              aws cloudformation delete-stack \
+                --stack-name ${{ env.STACK_NAME }} \
+                --retain-resources $FAILED_RESOURCES
+              aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }}
+              echo "Stack deleted (some resources retained for manual cleanup)."
+            else
+              echo "Stack deleted successfully."
+            fi
           fi
 
       # ----- Step 4: Deploy CloudFormation -----
