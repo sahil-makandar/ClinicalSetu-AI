@@ -75,24 +75,30 @@ jobs:
           aws s3 cp agent_lambda_deployment.zip "s3://${{ env.LAMBDA_BUCKET }}/agent_lambda_deployment.zip"
 
       # ----- Step 3.5: Handle failed stack state -----
-      - name: Continue rollback if stack is in failed state
+      - name: Clean up and delete failed stack
         run: |
           STACK_STATUS=$(aws cloudformation describe-stacks \
             --stack-name ${{ env.STACK_NAME }} \
             --query "Stacks[0].StackStatus" \
             --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-          
+
           echo "Current stack status: $STACK_STATUS"
-          
+
+          if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
+            echo "No existing stack. Will create fresh."
+            exit 0
+          fi
+
+          # If stack is healthy, skip cleanup
+          if [[ "$STACK_STATUS" == "CREATE_COMPLETE" ]] || [[ "$STACK_STATUS" == "UPDATE_COMPLETE" ]]; then
+            echo "Stack is healthy. Proceeding with update."
+            exit 0
+          fi
+
           if [ "$STACK_STATUS" = "UPDATE_ROLLBACK_FAILED" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ]; then
-            echo "Stack is in failed state. Attempting to continue rollback..."
+            echo "Attempting to continue rollback..."
             aws cloudformation continue-update-rollback --stack-name ${{ env.STACK_NAME }} || true
-
-            # Wait for rollback to complete
-            echo "Waiting for rollback to complete..."
             aws cloudformation wait stack-rollback-complete --stack-name ${{ env.STACK_NAME }} 2>/dev/null || true
-
-            # Re-check status after rollback attempt
             STACK_STATUS=$(aws cloudformation describe-stacks \
               --stack-name ${{ env.STACK_NAME }} \
               --query "Stacks[0].StackStatus" \
@@ -100,35 +106,110 @@ jobs:
             echo "Status after rollback attempt: $STACK_STATUS"
           fi
 
-          # Handle any deletable state (ROLLBACK_COMPLETE, DELETE_FAILED, *_FAILED)
+          # Need to delete the stack - first empty S3 buckets (common cause of DELETE_FAILED)
           if [[ "$STACK_STATUS" == "ROLLBACK_COMPLETE" ]] || [[ "$STACK_STATUS" == *"_FAILED" ]]; then
-            echo "Stack in state $STACK_STATUS. Deleting..."
+            echo "Emptying S3 buckets managed by stack before deletion..."
+            BUCKETS=$(aws cloudformation describe-stack-resources \
+              --stack-name ${{ env.STACK_NAME }} \
+              --query "StackResources[?ResourceType=='AWS::S3::Bucket'].PhysicalResourceId" \
+              --output text 2>/dev/null || echo "")
+            for BUCKET in $BUCKETS; do
+              echo "Emptying bucket: $BUCKET"
+              aws s3 rm "s3://$BUCKET" --recursive 2>/dev/null || true
+            done
+
+            echo "Deleting stack..."
             aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }}
             aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} 2>/dev/null || true
 
-            # Check if delete succeeded
             STACK_STATUS=$(aws cloudformation describe-stacks \
               --stack-name ${{ env.STACK_NAME }} \
               --query "Stacks[0].StackStatus" \
               --output text 2>/dev/null || echo "DOES_NOT_EXIST")
 
             if [ "$STACK_STATUS" = "DELETE_FAILED" ]; then
-              echo "Normal delete failed. Retrying with --retain-resources for stuck resources..."
-              # Get resources that failed to delete
+              echo "Normal delete failed. Force-deleting with --retain-resources..."
               FAILED_RESOURCES=$(aws cloudformation describe-stack-resources \
                 --stack-name ${{ env.STACK_NAME }} \
                 --query "StackResources[?ResourceStatus=='DELETE_FAILED'].LogicalResourceId" \
                 --output text 2>/dev/null || echo "")
-              echo "Retaining stuck resources: $FAILED_RESOURCES"
+              echo "Retaining: $FAILED_RESOURCES"
               aws cloudformation delete-stack \
                 --stack-name ${{ env.STACK_NAME }} \
                 --retain-resources $FAILED_RESOURCES
               aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }}
-              echo "Stack deleted (some resources retained for manual cleanup)."
-            else
-              echo "Stack deleted successfully."
             fi
+            echo "Stack deleted."
           fi
+
+      - name: Clean up orphaned resources from previous stack
+        run: |
+          # Check if stack exists - if it does, no cleanup needed
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].StackStatus" \
+            --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+          if [ "$STACK_STATUS" != "DOES_NOT_EXIST" ]; then
+            echo "Stack exists (status: $STACK_STATUS). Skipping orphan cleanup."
+            exit 0
+          fi
+
+          echo "Cleaning up orphaned named resources that would block stack creation..."
+          PROJECT="${{ env.PROJECT_NAME }}"
+          STAGE="${{ env.STAGE }}"
+
+          # Delete orphaned IAM roles (must detach policies first)
+          for ROLE in "${PROJECT}-lambda-role-${STAGE}" "${PROJECT}-agent-invoker-role-${STAGE}" "${PROJECT}-trial-fetcher-role-${STAGE}" "${PROJECT}-transcribe-unauth-${STAGE}"; do
+            if aws iam get-role --role-name "$ROLE" 2>/dev/null; then
+              echo "Cleaning up IAM role: $ROLE"
+              # Detach managed policies
+              POLICIES=$(aws iam list-attached-role-policies --role-name "$ROLE" --query "AttachedPolicies[].PolicyArn" --output text 2>/dev/null || echo "")
+              for POLICY in $POLICIES; do
+                aws iam detach-role-policy --role-name "$ROLE" --policy-arn "$POLICY" 2>/dev/null || true
+              done
+              # Delete inline policies
+              INLINE=$(aws iam list-role-policies --role-name "$ROLE" --query "PolicyNames[]" --output text 2>/dev/null || echo "")
+              for POL in $INLINE; do
+                aws iam delete-role-policy --role-name "$ROLE" --policy-name "$POL" 2>/dev/null || true
+              done
+              aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
+            fi
+          done
+
+          # Delete orphaned Lambda functions
+          for FUNC in "${PROJECT}-api-${STAGE}" "${PROJECT}-tool-executor-${STAGE}" "${PROJECT}-agent-invoker-${STAGE}" "${PROJECT}-trial-fetcher-${STAGE}" "${PROJECT}-visit-api-${STAGE}"; do
+            if aws lambda get-function --function-name "$FUNC" 2>/dev/null; then
+              echo "Deleting orphaned Lambda: $FUNC"
+              aws lambda delete-function --function-name "$FUNC" 2>/dev/null || true
+            fi
+          done
+
+          # Delete orphaned DynamoDB tables
+          for TABLE in "${PROJECT}-cache-${STAGE}" "${PROJECT}-visits-${STAGE}"; do
+            if aws dynamodb describe-table --table-name "$TABLE" 2>/dev/null; then
+              echo "Deleting orphaned DynamoDB table: $TABLE"
+              aws dynamodb delete-table --table-name "$TABLE" 2>/dev/null || true
+            fi
+          done
+
+          # Delete orphaned Cognito Identity Pool
+          POOLS=$(aws cognito-identity list-identity-pools --max-results 60 \
+            --query "IdentityPools[?starts_with(IdentityPoolName, '${PROJECT}-transcribe-pool')].IdentityPoolId" \
+            --output text 2>/dev/null || echo "")
+          for POOL_ID in $POOLS; do
+            echo "Deleting orphaned Cognito pool: $POOL_ID"
+            aws cognito-identity delete-identity-pool --identity-pool-id "$POOL_ID" 2>/dev/null || true
+          done
+
+          # Delete orphaned EventBridge rule
+          RULE_NAME="${PROJECT}-trial-fetch-daily-${STAGE}"
+          if aws events describe-rule --name "$RULE_NAME" 2>/dev/null; then
+            echo "Deleting orphaned EventBridge rule: $RULE_NAME"
+            aws events remove-targets --rule "$RULE_NAME" --ids TrialFetcherTarget 2>/dev/null || true
+            aws events delete-rule --name "$RULE_NAME" 2>/dev/null || true
+          fi
+
+          echo "Orphan cleanup complete."
 
       # ----- Step 4: Deploy CloudFormation -----
       - name: Deploy CloudFormation stack
