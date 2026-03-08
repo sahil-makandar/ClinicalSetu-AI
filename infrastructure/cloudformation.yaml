@@ -280,7 +280,6 @@ Resources:
       Environment:
         Variables:
           AWS_REGION_NAME: !Ref AWS::Region
-          AWS_REGION: !Ref AWS::Region
           BEDROCK_AGENT_ID: !Ref BedrockAgentId
           BEDROCK_AGENT_ALIAS_ID: !Ref BedrockAgentAliasId
           BEDROCK_MODEL_ID: !Ref BedrockModelId
