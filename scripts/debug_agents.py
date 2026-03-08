@@ -198,30 +198,39 @@ try:
             has_get_agent_alias = True
             log(PASS, f"Attached managed policy: {pol['PolicyName']} (covers model + agent permissions)")
 
+    # Check if a broad managed policy covers all permissions (skip detailed resource check)
+    has_broad_managed_policy = any(
+        p["PolicyName"] in ("AmazonBedrockFullAccess", "AdministratorAccess")
+        for p in attached_policies
+    )
+
     if has_invoke_model:
         log(PASS, "Role has bedrock:InvokeModel")
-        # Check if inference-profile ARNs are included (needed for us.* model IDs)
-        all_model_resources = []
-        for pol_name in inline_policies:
-            doc = iam.get_role_policy(RoleName=role_name, PolicyName=pol_name)["PolicyDocument"]
-            for stmt in doc.get("Statement", []):
-                actions = stmt.get("Action", [])
-                if isinstance(actions, str):
-                    actions = [actions]
-                if "bedrock:InvokeModel" in actions:
-                    res = stmt.get("Resource", [])
-                    if isinstance(res, str):
-                        res = [res]
-                    all_model_resources.extend(res)
-        has_inference_profile = any("inference-profile" in r for r in all_model_resources)
-        has_foundation_model = any("foundation-model" in r for r in all_model_resources)
-        print(f"  Model resources: {all_model_resources}")
-        if has_inference_profile:
-            log(PASS, "Role has inference-profile ARNs (needed for us.* model IDs)")
+        if has_broad_managed_policy:
+            log(PASS, "Managed policy covers all model + inference-profile resources (skipping detailed resource check)")
         else:
-            log(FAIL, "Role MISSING inference-profile ARNs! Agents use us.amazon.nova-lite-v1:0 which is a cross-region inference profile, NOT a foundation-model. Add: arn:aws:bedrock:REGION:ACCOUNT:inference-profile/us.amazon.nova-lite-v1:0")
-        if has_foundation_model:
-            log(PASS, "Role has foundation-model ARNs")
+            # Check if inference-profile ARNs are included (needed for us.* model IDs)
+            all_model_resources = []
+            for pol_name in inline_policies:
+                doc = iam.get_role_policy(RoleName=role_name, PolicyName=pol_name)["PolicyDocument"]
+                for stmt in doc.get("Statement", []):
+                    actions = stmt.get("Action", [])
+                    if isinstance(actions, str):
+                        actions = [actions]
+                    if "bedrock:InvokeModel" in actions:
+                        res = stmt.get("Resource", [])
+                        if isinstance(res, str):
+                            res = [res]
+                        all_model_resources.extend(res)
+            has_inference_profile = any("inference-profile" in r for r in all_model_resources)
+            has_foundation_model = any("foundation-model" in r for r in all_model_resources)
+            print(f"  Model resources: {all_model_resources}")
+            if has_inference_profile:
+                log(PASS, "Role has inference-profile ARNs (needed for us.* model IDs)")
+            else:
+                log(FAIL, "Role MISSING inference-profile ARNs! Agents use us.amazon.nova-lite-v1:0 which is a cross-region inference profile, NOT a foundation-model. Add: arn:aws:bedrock:REGION:ACCOUNT:inference-profile/us.amazon.nova-lite-v1:0")
+            if has_foundation_model:
+                log(PASS, "Role has foundation-model ARNs")
     else:
         log(FAIL, "Role MISSING bedrock:InvokeModel — agents cannot call foundation models!")
 
@@ -688,7 +697,12 @@ Please coordinate with your specialist agents to generate all documentation."""
                         obs = orch["observation"]
                         if "actionGroupInvocationOutput" in obs:
                             out_text = obs["actionGroupInvocationOutput"].get("text", "")
-                            print(f"    <- Tool response: {out_text[:100]}...")
+                            print(f"    <- Tool response: {out_text[:200]}...")
+                        if "collaboratorInvocationOutput" in obs:
+                            collab_out = obs["collaboratorInvocationOutput"]
+                            collab_name = collab_out.get("collaboratorName", "?")
+                            collab_text = collab_out.get("output", {}).get("text", "")
+                            print(f"    <- Collaborator {collab_name} response ({len(collab_text)} chars): {collab_text[:300]}...")
                     # Check for errors in trace
                     if "failureTrace" in trace:
                         ft = trace["failureTrace"]

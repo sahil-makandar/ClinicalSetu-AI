@@ -137,13 +137,21 @@ After all agents complete, provide a brief summary of what was generated."""
                             "status": "invoked"
                         })
 
-                # Tool response
+                # Tool response (direct action group or collaborator output)
                 if "observation" in orch:
                     obs = orch["observation"]
                     if "actionGroupInvocationOutput" in obs:
                         output = obs["actionGroupInvocationOutput"]
                         output_text = output.get("text", "")
                         _parse_tool_output(output_text, tool_outputs)
+                    # Collaborator agent responses (multi-agent collaboration)
+                    if "collaboratorInvocationOutput" in obs:
+                        collab_output = obs["collaboratorInvocationOutput"]
+                        collab_text = collab_output.get("output", {}).get("text", "")
+                        if collab_text:
+                            _parse_tool_output(collab_text, tool_outputs)
+                            # Also try to extract JSON blocks from the collaborator's response
+                            _extract_json_from_text(collab_text, tool_outputs)
 
     total_duration = int((time.time() - start_time) * 1000)
 
@@ -191,19 +199,49 @@ def _parse_tool_output(output_text, tool_outputs):
     """Parse tool output and classify it into the correct result category."""
     try:
         parsed = json.loads(output_text)
-        # Identify which tool this is from based on content
-        if "subjective" in parsed and "objective" in parsed:
-            tool_outputs["soap_note"] = parsed
-        elif "greeting" in parsed or "visit_summary" in parsed:
-            tool_outputs["patient_summary"] = parsed
-        elif "referral_letter" in parsed:
-            tool_outputs["referral_letter"] = parsed
-        elif "discharge_summary" in parsed or ("header" in parsed and "condition_at_discharge" in parsed):
-            tool_outputs["discharge_summary"] = parsed
-        elif "trial_matches" in parsed:
-            tool_outputs["trial_matches"] = parsed
+        _classify_parsed_output(parsed, tool_outputs)
     except (json.JSONDecodeError, TypeError):
         pass
+
+
+def _classify_parsed_output(parsed, tool_outputs):
+    """Classify a parsed JSON object into the correct result category."""
+    if not isinstance(parsed, dict):
+        return
+    # Identify which tool this is from based on content
+    if "subjective" in parsed and "objective" in parsed:
+        tool_outputs["soap_note"] = parsed
+    elif "greeting" in parsed or "visit_summary" in parsed:
+        tool_outputs["patient_summary"] = parsed
+    elif "referral_letter" in parsed:
+        tool_outputs["referral_letter"] = parsed
+    elif "discharge_summary" in parsed or ("header" in parsed and "condition_at_discharge" in parsed):
+        tool_outputs["discharge_summary"] = parsed
+    elif "trial_matches" in parsed:
+        tool_outputs["trial_matches"] = parsed
+
+
+def _extract_json_from_text(text, tool_outputs):
+    """Extract embedded JSON objects from collaborator text responses."""
+    # Find JSON blocks in text (possibly wrapped in markdown code fences or mixed with text)
+    # Try to find JSON objects by looking for { ... } patterns
+    brace_depth = 0
+    start = None
+    for i, ch in enumerate(text):
+        if ch == '{':
+            if brace_depth == 0:
+                start = i
+            brace_depth += 1
+        elif ch == '}':
+            brace_depth -= 1
+            if brace_depth == 0 and start is not None:
+                candidate = text[start:i+1]
+                try:
+                    parsed = json.loads(candidate)
+                    _classify_parsed_output(parsed, tool_outputs)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                start = None
 
 
 def lambda_handler(event, context):
