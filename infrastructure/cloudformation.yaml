@@ -310,7 +310,11 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock:InvokeAgent
-                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/*'
+                  - bedrock:GetAgent
+                  - bedrock:GetAgentAlias
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/*'
               - Effect: Allow
                 Action:
                   - bedrock:InvokeModel
