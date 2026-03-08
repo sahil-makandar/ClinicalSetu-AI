@@ -327,11 +327,13 @@ jobs:
                   "bedrock:InvokeModel",
                   "bedrock:InvokeModelWithResponseStream",
                   "bedrock:Converse",
-                  "bedrock:ConverseStream"
+                  "bedrock:ConverseStream",
+                  "bedrock:GetInferenceProfile",
+                  "bedrock:ListInferenceProfiles"
                 ],
                 "Resource": [
                   "arn:aws:bedrock:us-east-1::foundation-model/*",
-                  "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:inference-profile/*"
+                  "arn:aws:bedrock:*:*:inference-profile/*"
                 ]
               },
               {

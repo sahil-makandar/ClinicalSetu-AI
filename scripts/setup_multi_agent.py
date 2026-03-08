@@ -94,11 +94,13 @@ def get_or_create_agent_role():
                     "bedrock:InvokeModel",
                     "bedrock:InvokeModelWithResponseStream",
                     "bedrock:Converse",
-                    "bedrock:ConverseStream"
+                    "bedrock:ConverseStream",
+                    "bedrock:GetInferenceProfile",
+                    "bedrock:ListInferenceProfiles"
                 ],
                 "Resource": [
                     f"arn:aws:bedrock:{REGION}::foundation-model/*",
-                    f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:inference-profile/*",
+                    f"arn:aws:bedrock:*:*:inference-profile/*",
                 ]
             },
             {
