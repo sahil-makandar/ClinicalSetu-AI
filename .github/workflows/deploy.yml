@@ -282,7 +282,56 @@ jobs:
             echo "WARNING: Could not extract agent IDs. Check setup script output above."
           fi
 
-      # ----- Step 4.55: Debug Multi-Agent Permissions & Connectivity -----
+      # ----- Step 4.55: Fix agent role permissions (inference profiles) -----
+      - name: Fix agent service role permissions
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "Updating ClinicalSetu-MultiAgentRole with inference-profile permissions..."
+          cat > /tmp/agent_model_policy.json << POLICYEOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+                "Resource": [
+                  "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0",
+                  "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-micro-v1:0",
+                  "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0",
+                  "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:inference-profile/us.amazon.nova-lite-v1:0",
+                  "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:inference-profile/us.amazon.nova-micro-v1:0"
+                ]
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["bedrock:Retrieve", "bedrock:RetrieveAndGenerate"],
+                "Resource": "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:knowledge-base/*"
+              }
+            ]
+          }
+          POLICYEOF
+          # Substitute account ID
+          sed -i "s/\${ACCOUNT_ID}/$ACCOUNT_ID/g" /tmp/agent_model_policy.json
+          aws iam put-role-policy \
+            --role-name ClinicalSetu-MultiAgentRole \
+            --policy-name ClinicalSetuMultiAgentPolicy \
+            --policy-document file:///tmp/agent_model_policy.json
+          echo "Policy updated. Waiting 15s for IAM propagation..."
+          sleep 15
+
+          # Re-prepare all agents to pick up new permissions
+          echo "Re-preparing all agents..."
+          for AGENT_NAME in ClinicalSetu-SOAPAgent ClinicalSetu-SummaryAgent ClinicalSetu-ReferralAgent ClinicalSetu-TrialAgent ClinicalSetu-Supervisor; do
+            AGENT_ID=$(aws bedrock-agent list-agents --query "agentSummaries[?agentName=='${AGENT_NAME}'].agentId" --output text 2>/dev/null)
+            if [ -n "$AGENT_ID" ]; then
+              aws bedrock-agent prepare-agent --agent-id "$AGENT_ID" --no-cli-pager
+              echo "  Preparing $AGENT_NAME ($AGENT_ID)..."
+            fi
+          done
+          echo "Waiting 30s for agents to prepare..."
+          sleep 30
+
+      # ----- Step 4.56: Debug Multi-Agent Permissions & Connectivity -----
       - name: Debug Bedrock Multi-Agent Setup
         run: |
           echo "Running multi-agent diagnostics..."
