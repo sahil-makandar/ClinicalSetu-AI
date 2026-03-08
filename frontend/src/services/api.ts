@@ -17,17 +17,11 @@ export async function processConsultation(consultation: Consultation): Promise<P
   // Use Lambda Function URL (no timeout limit)
   // Falls back to API Gateway /api/process-agent for local dev
   if (AGENT_FUNCTION_URL) {
-    const response = await axios.post(AGENT_FUNCTION_URL, {
-      httpMethod: 'POST',
-      body: JSON.stringify(consultation),
-    }, {
+    const response = await axios.post(AGENT_FUNCTION_URL, consultation, {
       timeout: 300000,
       headers: { 'Content-Type': 'application/json' },
     });
-    const data = typeof response.data.body === 'string'
-      ? JSON.parse(response.data.body)
-      : response.data;
-    return data;
+    return response.data;
   }
 
   // Fallback: API Gateway path
