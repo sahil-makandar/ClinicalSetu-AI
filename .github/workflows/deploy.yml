@@ -282,6 +282,16 @@ jobs:
             echo "WARNING: Could not extract agent IDs. Check setup script output above."
           fi
 
+      # ----- Step 4.55: Debug Multi-Agent Permissions & Connectivity -----
+      - name: Debug Bedrock Multi-Agent Setup
+        run: |
+          echo "Running multi-agent diagnostics..."
+          python scripts/debug_agents.py 2>&1 | tee /tmp/agent_debug.log
+          echo "## Agent Debug Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/agent_debug.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
       # ----- Step 4.6: Setup Bedrock Knowledge Base for RAG (one-time) -----
       - name: Setup Bedrock Knowledge Base for RAG
         if: vars.KNOWLEDGE_BASE_SETUP_DONE != 'true'

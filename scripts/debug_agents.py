@@ -1,0 +1,552 @@
+"""
+ClinicalSetu - Multi-Agent Debug & Diagnostics Script
+Checks every permission, configuration, and connectivity issue
+for the Bedrock Multi-Agent Collaboration setup.
+
+Exit codes:
+  0 = all checks passed
+  1 = one or more checks failed
+"""
+
+import boto3
+import json
+import os
+import sys
+import time
+import uuid
+
+REGION = os.environ.get("AWS_REGION", "us-east-1")
+PROJECT = os.environ.get("PROJECT_NAME", "clinicalsetu")
+STAGE = os.environ.get("STAGE", "prod")
+
+sts = boto3.client("sts", region_name=REGION)
+iam = boto3.client("iam", region_name=REGION)
+bedrock_agent_client = boto3.client("bedrock-agent", region_name=REGION)
+bedrock_runtime = boto3.client("bedrock-runtime", region_name=REGION)
+bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=REGION)
+lambda_client = boto3.client("lambda", region_name=REGION)
+
+ACCOUNT_ID = sts.get_caller_identity()["Account"]
+CALLER_ARN = sts.get_caller_identity()["Arn"]
+
+PASS = "PASS"
+FAIL = "FAIL"
+WARN = "WARN"
+failures = []
+
+
+def log(status, msg):
+    prefix = {"PASS": "✅", "FAIL": "❌", "WARN": "⚠️"}.get(status, "ℹ️")
+    print(f"  {prefix} [{status}] {msg}")
+    if status == FAIL:
+        failures.append(msg)
+
+
+def section(title):
+    print(f"\n{'='*60}")
+    print(f"  {title}")
+    print(f"{'='*60}")
+
+
+# =====================================================
+# 1. BASIC CONNECTIVITY
+# =====================================================
+section("1. AWS CONNECTIVITY & IDENTITY")
+print(f"  Account:  {ACCOUNT_ID}")
+print(f"  Region:   {REGION}")
+print(f"  Caller:   {CALLER_ARN}")
+log(PASS, "AWS credentials are valid")
+
+
+# =====================================================
+# 2. LIST ALL AGENTS
+# =====================================================
+section("2. BEDROCK AGENTS INVENTORY")
+
+all_agents = []
+paginator = bedrock_agent_client.get_paginator("list_agents")
+for page in paginator.paginate():
+    all_agents.extend(page.get("agentSummaries", []))
+
+clinical_agents = [a for a in all_agents if a["agentName"].startswith("ClinicalSetu")]
+print(f"  Found {len(clinical_agents)} ClinicalSetu agents:")
+
+supervisor = None
+collaborators = {}
+for a in clinical_agents:
+    agent_id = a["agentId"]
+    name = a["agentName"]
+    status = a["agentStatus"]
+    print(f"    {name}: {agent_id} (status: {status})")
+    if status != "PREPARED":
+        log(FAIL, f"Agent {name} is NOT PREPARED (status: {status})")
+    else:
+        log(PASS, f"Agent {name} is PREPARED")
+    if "Supervisor" in name:
+        supervisor = a
+    else:
+        collaborators[name] = a
+
+if not supervisor:
+    log(FAIL, "No Supervisor agent found!")
+    print("\n❌ FATAL: Cannot continue without a Supervisor agent.")
+    sys.exit(1)
+
+SUPERVISOR_ID = supervisor["agentId"]
+
+
+# =====================================================
+# 3. CHECK AGENT ALIASES
+# =====================================================
+section("3. AGENT ALIASES")
+
+def get_agent_aliases(agent_id, agent_name):
+    """Get all aliases for an agent."""
+    try:
+        resp = bedrock_agent_client.list_agent_aliases(agentId=agent_id)
+        aliases = resp.get("agentAliasSummaries", [])
+        if not aliases:
+            log(FAIL, f"{agent_name} ({agent_id}) has NO aliases — cannot be invoked!")
+            return None
+        for alias in aliases:
+            a_id = alias["agentAliasId"]
+            a_name = alias["agentAliasName"]
+            a_status = alias.get("agentAliasStatus", "unknown")
+            print(f"    {agent_name}: alias={a_name} id={a_id} status={a_status}")
+            if a_status != "PREPARED":
+                log(WARN, f"{agent_name} alias '{a_name}' status is {a_status} (expected PREPARED)")
+            else:
+                log(PASS, f"{agent_name} has alias '{a_name}' (PREPARED)")
+        return aliases
+    except Exception as e:
+        log(FAIL, f"Cannot list aliases for {agent_name}: {e}")
+        return None
+
+
+supervisor_aliases = get_agent_aliases(SUPERVISOR_ID, "Supervisor")
+supervisor_alias_id = None
+if supervisor_aliases:
+    # Prefer 'prod' alias, fallback to first
+    for a in supervisor_aliases:
+        if a["agentAliasName"] == "prod":
+            supervisor_alias_id = a["agentAliasId"]
+            break
+    if not supervisor_alias_id:
+        supervisor_alias_id = supervisor_aliases[0]["agentAliasId"]
+
+collaborator_alias_arns = []
+for name, agent in collaborators.items():
+    aliases = get_agent_aliases(agent["agentId"], name)
+    if aliases:
+        for a in aliases:
+            arn = f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:agent-alias/{agent['agentId']}/{a['agentAliasId']}"
+            collaborator_alias_arns.append(arn)
+
+
+# =====================================================
+# 4. SUPERVISOR SERVICE ROLE PERMISSIONS
+# =====================================================
+section("4. SUPERVISOR SERVICE ROLE PERMISSIONS")
+
+try:
+    sup_detail = bedrock_agent_client.get_agent(agentId=SUPERVISOR_ID)["agent"]
+    role_arn = sup_detail.get("agentResourceRoleArn", "")
+    role_name = role_arn.split("/")[-1] if "/" in role_arn else role_arn
+    print(f"  Supervisor role ARN: {role_arn}")
+    print(f"  Supervisor role name: {role_name}")
+
+    # List inline policies
+    inline_policies = iam.list_role_policies(RoleName=role_name)["PolicyNames"]
+    print(f"  Inline policies: {inline_policies}")
+
+    # List attached policies
+    attached_policies = iam.list_attached_role_policies(RoleName=role_name)["AttachedPolicies"]
+    print(f"  Attached policies: {[p['PolicyName'] for p in attached_policies]}")
+
+    # Check each inline policy for required permissions
+    has_invoke_agent = False
+    has_get_agent_alias = False
+    has_invoke_model = False
+    invoke_agent_resources = []
+
+    for pol_name in inline_policies:
+        doc = iam.get_role_policy(RoleName=role_name, PolicyName=pol_name)["PolicyDocument"]
+        print(f"\n  Policy: {pol_name}")
+        print(f"  {json.dumps(doc, indent=4)}")
+
+        for stmt in doc.get("Statement", []):
+            actions = stmt.get("Action", [])
+            if isinstance(actions, str):
+                actions = [actions]
+            resources = stmt.get("Resource", [])
+            if isinstance(resources, str):
+                resources = [resources]
+
+            if "bedrock:InvokeAgent" in actions:
+                has_invoke_agent = True
+                invoke_agent_resources.extend(resources)
+            if "bedrock:GetAgentAlias" in actions:
+                has_get_agent_alias = True
+            if "bedrock:InvokeModel" in actions:
+                has_invoke_model = True
+
+    if has_invoke_model:
+        log(PASS, "Role has bedrock:InvokeModel")
+    else:
+        log(FAIL, "Role MISSING bedrock:InvokeModel — agents cannot call foundation models!")
+
+    if has_invoke_agent:
+        log(PASS, f"Role has bedrock:InvokeAgent on resources: {invoke_agent_resources}")
+    else:
+        log(FAIL, "Role MISSING bedrock:InvokeAgent — Supervisor cannot invoke collaborators!")
+
+    if has_get_agent_alias:
+        log(PASS, "Role has bedrock:GetAgentAlias")
+    else:
+        log(FAIL, "Role MISSING bedrock:GetAgentAlias — needed for multi-agent collaboration!")
+
+    # Check if collaborator alias ARNs are covered by the policy resources
+    if invoke_agent_resources:
+        print(f"\n  Checking collaborator ARNs against policy resources...")
+        for collab_arn in collaborator_alias_arns:
+            matched = False
+            for res in invoke_agent_resources:
+                # Simple wildcard matching
+                if res.endswith("/*") or res == "*":
+                    prefix = res.replace("/*", "/")
+                    if collab_arn.startswith(prefix) or res == "*":
+                        matched = True
+                        break
+                elif collab_arn == res:
+                    matched = True
+                    break
+            if matched:
+                log(PASS, f"Collaborator ARN covered: {collab_arn}")
+            else:
+                log(FAIL, f"Collaborator ARN NOT covered by policy: {collab_arn}")
+                log(FAIL, f"  Policy resources: {invoke_agent_resources}")
+
+    # Check trust policy
+    trust = iam.get_role(RoleName=role_name)["Role"]["AssumeRolePolicyDocument"]
+    print(f"\n  Trust policy:")
+    print(f"  {json.dumps(trust, indent=4)}")
+    trust_principals = []
+    for stmt in trust.get("Statement", []):
+        principal = stmt.get("Principal", {})
+        if isinstance(principal, dict):
+            trust_principals.extend(principal.get("Service", []) if isinstance(principal.get("Service"), list) else [principal.get("Service", "")])
+        elif isinstance(principal, str):
+            trust_principals.append(principal)
+
+    if "bedrock.amazonaws.com" in trust_principals:
+        log(PASS, "Trust policy allows bedrock.amazonaws.com")
+    else:
+        log(FAIL, f"Trust policy does NOT allow bedrock.amazonaws.com! Principals: {trust_principals}")
+
+except Exception as e:
+    log(FAIL, f"Cannot check supervisor role: {e}")
+
+
+# =====================================================
+# 5. SUPERVISOR COLLABORATOR ASSOCIATIONS
+# =====================================================
+section("5. SUPERVISOR COLLABORATOR ASSOCIATIONS")
+
+try:
+    assoc_resp = bedrock_agent_client.list_agent_collaborators(
+        agentId=SUPERVISOR_ID,
+        agentVersion="DRAFT"
+    )
+    associations = assoc_resp.get("agentCollaboratorSummaries", [])
+    print(f"  Found {len(associations)} collaborator associations:")
+    for assoc in associations:
+        collab_name = assoc.get("collaboratorName", "unknown")
+        # Try to get alias ARN from the descriptor
+        print(f"    {collab_name}: {json.dumps(assoc, indent=6, default=str)}")
+        log(PASS, f"Collaborator associated: {collab_name}")
+
+    expected = {"ClinicalSetu-SOAPAgent", "ClinicalSetu-SummaryAgent", "ClinicalSetu-ReferralAgent", "ClinicalSetu-TrialAgent"}
+    found = {a.get("collaboratorName", "") for a in associations}
+    missing = expected - found
+    if missing:
+        log(FAIL, f"Missing collaborator associations: {missing}")
+    else:
+        log(PASS, "All 4 collaborators are associated with supervisor")
+except Exception as e:
+    log(FAIL, f"Cannot list collaborator associations: {e}")
+
+
+# =====================================================
+# 6. TOOL EXECUTOR LAMBDA
+# =====================================================
+section("6. TOOL EXECUTOR LAMBDA")
+
+tool_lambda_name = f"{PROJECT}-tool-executor-{STAGE}"
+try:
+    func = lambda_client.get_function(FunctionName=tool_lambda_name)
+    func_arn = func["Configuration"]["FunctionArn"]
+    print(f"  Lambda: {tool_lambda_name}")
+    print(f"  ARN: {func_arn}")
+    print(f"  Runtime: {func['Configuration']['Runtime']}")
+    print(f"  Timeout: {func['Configuration']['Timeout']}s")
+    print(f"  Memory: {func['Configuration']['MemorySize']}MB")
+    log(PASS, f"Tool executor Lambda exists: {tool_lambda_name}")
+
+    # Check resource-based policy
+    try:
+        policy_resp = lambda_client.get_policy(FunctionName=tool_lambda_name)
+        policy_doc = json.loads(policy_resp["Policy"])
+        print(f"\n  Resource-based policy:")
+        bedrock_allowed = False
+        for stmt in policy_doc.get("Statement", []):
+            principal = stmt.get("Principal", {})
+            if isinstance(principal, dict):
+                svc = principal.get("Service", "")
+            else:
+                svc = principal
+            action = stmt.get("Action", "")
+            print(f"    SID={stmt.get('Sid','?')} Principal={svc} Action={action}")
+            if "bedrock" in str(svc).lower():
+                bedrock_allowed = True
+        if bedrock_allowed:
+            log(PASS, "Bedrock has permission to invoke Tool Executor Lambda")
+        else:
+            log(FAIL, "Bedrock does NOT have resource-based permission to invoke Tool Executor Lambda!")
+            log(FAIL, "Fix: Add lambda:InvokeFunction permission for bedrock.amazonaws.com")
+    except lambda_client.exceptions.ResourceNotFoundException:
+        log(FAIL, "Tool Executor Lambda has NO resource-based policy — Bedrock cannot invoke it!")
+
+except Exception as e:
+    log(FAIL, f"Tool executor Lambda not found: {e}")
+
+
+# =====================================================
+# 7. AGENT INVOKER LAMBDA
+# =====================================================
+section("7. AGENT INVOKER LAMBDA")
+
+invoker_lambda_name = f"{PROJECT}-agent-invoker-{STAGE}"
+try:
+    func = lambda_client.get_function(FunctionName=invoker_lambda_name)
+    env_vars = func["Configuration"].get("Environment", {}).get("Variables", {})
+    agent_id_env = env_vars.get("BEDROCK_AGENT_ID", "")
+    alias_id_env = env_vars.get("BEDROCK_AGENT_ALIAS_ID", "")
+    print(f"  Lambda: {invoker_lambda_name}")
+    print(f"  BEDROCK_AGENT_ID = '{agent_id_env}'")
+    print(f"  BEDROCK_AGENT_ALIAS_ID = '{alias_id_env}'")
+
+    if not agent_id_env:
+        log(FAIL, "BEDROCK_AGENT_ID env var is EMPTY — Lambda doesn't know which agent to call!")
+    elif agent_id_env != SUPERVISOR_ID:
+        log(FAIL, f"BEDROCK_AGENT_ID mismatch! Lambda has '{agent_id_env}' but Supervisor is '{SUPERVISOR_ID}'")
+    else:
+        log(PASS, f"BEDROCK_AGENT_ID matches Supervisor: {agent_id_env}")
+
+    if not alias_id_env:
+        log(FAIL, "BEDROCK_AGENT_ALIAS_ID env var is EMPTY!")
+    else:
+        # Verify this alias actually exists
+        try:
+            alias_detail = bedrock_agent_client.get_agent_alias(
+                agentId=SUPERVISOR_ID,
+                agentAliasId=alias_id_env
+            )
+            alias_status = alias_detail["agentAlias"]["agentAliasStatus"]
+            if alias_status == "PREPARED":
+                log(PASS, f"BEDROCK_AGENT_ALIAS_ID '{alias_id_env}' exists and is PREPARED")
+            else:
+                log(WARN, f"BEDROCK_AGENT_ALIAS_ID '{alias_id_env}' status is {alias_status}")
+        except Exception as e:
+            log(FAIL, f"BEDROCK_AGENT_ALIAS_ID '{alias_id_env}' is INVALID: {e}")
+
+    # Check Lambda's execution role
+    lambda_role_arn = func["Configuration"]["Role"]
+    lambda_role_name = lambda_role_arn.split("/")[-1]
+    print(f"\n  Execution role: {lambda_role_name}")
+
+    inline_pols = iam.list_role_policies(RoleName=lambda_role_name)["PolicyNames"]
+    lambda_has_invoke_agent = False
+    for pol_name in inline_pols:
+        doc = iam.get_role_policy(RoleName=lambda_role_name, PolicyName=pol_name)["PolicyDocument"]
+        for stmt in doc.get("Statement", []):
+            actions = stmt.get("Action", [])
+            if isinstance(actions, str):
+                actions = [actions]
+            if "bedrock:InvokeAgent" in actions:
+                lambda_has_invoke_agent = True
+
+    if lambda_has_invoke_agent:
+        log(PASS, "Lambda execution role has bedrock:InvokeAgent permission")
+    else:
+        log(FAIL, "Lambda execution role MISSING bedrock:InvokeAgent!")
+
+except Exception as e:
+    log(FAIL, f"Agent invoker Lambda not found: {e}")
+
+
+# =====================================================
+# 8. FOUNDATION MODEL ACCESS
+# =====================================================
+section("8. FOUNDATION MODEL ACCESS")
+
+test_models = ["us.amazon.nova-lite-v1:0", "us.amazon.nova-micro-v1:0"]
+for model_id in test_models:
+    try:
+        resp = bedrock_runtime.converse(
+            modelId=model_id,
+            messages=[{"role": "user", "content": [{"text": "Say OK"}]}],
+            inferenceConfig={"maxTokens": 10}
+        )
+        output = resp["output"]["message"]["content"][0]["text"]
+        log(PASS, f"Model {model_id} accessible (response: '{output[:30]}')")
+    except Exception as e:
+        log(FAIL, f"Model {model_id} NOT accessible: {e}")
+
+
+# =====================================================
+# 9. INVOKE EACH COLLABORATOR AGENT DIRECTLY
+# =====================================================
+section("9. TEST INVOKE EACH COLLABORATOR AGENT")
+
+for name, agent in collaborators.items():
+    agent_id = agent["agentId"]
+    aliases = get_agent_aliases(agent_id, name)
+    if not aliases:
+        log(FAIL, f"Cannot test {name} — no aliases")
+        continue
+
+    alias_id = aliases[0]["agentAliasId"]
+    session_id = str(uuid.uuid4())
+
+    print(f"\n  Testing {name} (agent={agent_id}, alias={alias_id})...")
+    try:
+        resp = bedrock_agent_runtime.invoke_agent(
+            agentId=agent_id,
+            agentAliasId=alias_id,
+            sessionId=session_id,
+            inputText="Test connectivity. Just reply with OK.",
+            enableTrace=False
+        )
+        # Read the stream
+        response_text = ""
+        for event in resp.get("completion", []):
+            if "chunk" in event:
+                chunk_bytes = event["chunk"].get("bytes", b"")
+                if isinstance(chunk_bytes, bytes):
+                    response_text += chunk_bytes.decode("utf-8")
+        log(PASS, f"{name} responded: '{response_text[:80]}'")
+    except Exception as e:
+        error_str = str(e)
+        log(FAIL, f"{name} INVOKE FAILED: {error_str}")
+        if "accessDenied" in error_str.lower():
+            log(FAIL, f"  -> This is a PERMISSION issue. Check {name}'s service role and model access.")
+        elif "throttl" in error_str.lower():
+            log(WARN, f"  -> Throttled. Retry later.")
+        elif "timeout" in error_str.lower():
+            log(WARN, f"  -> Timeout. Model may be slow.")
+
+
+# =====================================================
+# 10. INVOKE SUPERVISOR AGENT (END-TO-END TEST)
+# =====================================================
+section("10. TEST INVOKE SUPERVISOR AGENT (END-TO-END)")
+
+if supervisor_alias_id:
+    session_id = str(uuid.uuid4())
+    test_prompt = """Process this clinical consultation:
+
+CONSULTATION: Patient Ravi Kumar, 45 year old male, presents with headache for 2 days.
+No fever, no vomiting. BP 130/80. Prescribed paracetamol 500mg TDS for 3 days.
+
+PATIENT: Name=Ravi Kumar, Age=45, Gender=Male
+DOCTOR: Dr. Sharma, General Medicine, City Hospital
+REFERRAL: No referral needed. Skip the generate_referral tool.
+
+Please coordinate with your specialist agents to generate all documentation."""
+
+    print(f"  Supervisor: {SUPERVISOR_ID}")
+    print(f"  Alias: {supervisor_alias_id}")
+    print(f"  Session: {session_id}")
+    print(f"  Sending test consultation...")
+
+    try:
+        resp = bedrock_agent_runtime.invoke_agent(
+            agentId=SUPERVISOR_ID,
+            agentAliasId=supervisor_alias_id,
+            sessionId=session_id,
+            inputText=test_prompt,
+            enableTrace=True
+        )
+
+        response_text = ""
+        traces = []
+        for event in resp.get("completion", []):
+            if "chunk" in event:
+                chunk_bytes = event["chunk"].get("bytes", b"")
+                if isinstance(chunk_bytes, bytes):
+                    response_text += chunk_bytes.decode("utf-8")
+            if "trace" in event:
+                trace = event["trace"].get("trace", {})
+                if "orchestrationTrace" in trace:
+                    orch = trace["orchestrationTrace"]
+                    # Log collaborator invocations
+                    if "invocationInput" in orch:
+                        inv = orch["invocationInput"]
+                        if "collaboratorInvocationInput" in inv:
+                            collab = inv["collaboratorInvocationInput"]
+                            collab_name = collab.get("collaboratorName", "?")
+                            print(f"    -> Supervisor delegating to: {collab_name}")
+                        if "actionGroupInvocationInput" in inv:
+                            tool = inv["actionGroupInvocationInput"]
+                            func_name = tool.get("function", "?")
+                            print(f"    -> Tool called: {func_name}")
+                    if "observation" in orch:
+                        obs = orch["observation"]
+                        if "actionGroupInvocationOutput" in obs:
+                            out_text = obs["actionGroupInvocationOutput"].get("text", "")
+                            print(f"    <- Tool response: {out_text[:100]}...")
+                    # Check for errors in trace
+                    if "failureTrace" in trace:
+                        ft = trace["failureTrace"]
+                        print(f"    !! FAILURE TRACE: {json.dumps(ft, default=str)}")
+                if "failureTrace" in trace:
+                    ft = trace["failureTrace"]
+                    log(FAIL, f"Failure trace: {json.dumps(ft, default=str)}")
+
+        if response_text:
+            print(f"\n  Supervisor response ({len(response_text)} chars):")
+            print(f"  {response_text[:500]}")
+            log(PASS, "Supervisor end-to-end test PASSED")
+        else:
+            log(WARN, "Supervisor returned empty response")
+
+    except Exception as e:
+        error_str = str(e)
+        log(FAIL, f"Supervisor INVOKE FAILED: {error_str}")
+        if "accessDenied" in error_str.lower():
+            log(FAIL, "  -> PERMISSION ISSUE. Likely causes:")
+            log(FAIL, "     1. Supervisor's service role missing bedrock:InvokeAgent for collaborators")
+            log(FAIL, "     2. Supervisor's service role missing bedrock:InvokeModel for foundation model")
+            log(FAIL, "     3. Collaborator agents' roles missing bedrock:InvokeModel")
+            log(FAIL, "     4. Tool Executor Lambda missing resource-based policy for bedrock.amazonaws.com")
+        elif "dependencyFailed" in error_str.lower():
+            log(FAIL, "  -> DEPENDENCY FAILED. A collaborator or its Lambda tool failed.")
+            log(FAIL, "     Check Tool Executor Lambda CloudWatch logs for details.")
+else:
+    log(FAIL, "Cannot test Supervisor — no alias found")
+
+
+# =====================================================
+# SUMMARY
+# =====================================================
+section("DEBUG SUMMARY")
+if failures:
+    print(f"\n  ❌ {len(failures)} FAILURE(S) FOUND:\n")
+    for i, f in enumerate(failures, 1):
+        print(f"    {i}. {f}")
+    print(f"\n  Fix the above issues and re-run this script.")
+    sys.exit(1)
+else:
+    print(f"\n  ✅ ALL CHECKS PASSED — no issues found.")
+    print(f"  If InvokeAgent still fails, check CloudTrail for detailed denial reasons.")
+    sys.exit(0)
