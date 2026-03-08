@@ -110,6 +110,14 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
                   - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
+                  - !Sub 'arn:aws:bedrock:us-east-1:${AWS::AccountId}:inference-profile/*'
+                  - 'arn:aws:bedrock:*::foundation-model/*'
+              - Effect: Allow
+                Action:
+                  - bedrock:GetInferenceProfile
+                  - bedrock:ListInferenceProfiles
+                Resource: '*'
               - Effect: Allow
                 Action:
                   - bedrock:Retrieve
@@ -324,6 +332,14 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
                   - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
+                  - !Sub 'arn:aws:bedrock:us-east-1:${AWS::AccountId}:inference-profile/*'
+                  - 'arn:aws:bedrock:*::foundation-model/*'
+              - Effect: Allow
+                Action:
+                  - bedrock:GetInferenceProfile
+                  - bedrock:ListInferenceProfiles
+                Resource: '*'
               - Effect: Allow
                 Action:
                   - bedrock:Retrieve

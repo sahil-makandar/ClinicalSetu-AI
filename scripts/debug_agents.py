@@ -190,6 +190,14 @@ try:
             if "bedrock:InvokeModel" in actions:
                 has_invoke_model = True
 
+    # Also check attached managed policies
+    for pol in attached_policies:
+        if "BedrockFullAccess" in pol["PolicyName"] or "Bedrock" in pol["PolicyName"]:
+            has_invoke_model = True
+            has_invoke_agent = True
+            has_get_agent_alias = True
+            log(PASS, f"Attached managed policy: {pol['PolicyName']} (covers model + agent permissions)")
+
     if has_invoke_model:
         log(PASS, "Role has bedrock:InvokeModel")
         # Check if inference-profile ARNs are included (needed for us.* model IDs)
@@ -337,6 +345,90 @@ try:
             log(FAIL, "Fix: Add lambda:InvokeFunction permission for bedrock.amazonaws.com")
     except lambda_client.exceptions.ResourceNotFoundException:
         log(FAIL, "Tool Executor Lambda has NO resource-based policy — Bedrock cannot invoke it!")
+
+    # Check Tool Executor Lambda's execution role for Converse/InvokeModel + inference-profile permissions
+    tool_role_arn = func["Configuration"]["Role"]
+    tool_role_name = tool_role_arn.split("/")[-1]
+    print(f"\n  Execution role: {tool_role_name}")
+
+    tool_inline_pols = iam.list_role_policies(RoleName=tool_role_name)["PolicyNames"]
+    tool_has_converse = False
+    tool_has_inference_profile = False
+    for pol_name in tool_inline_pols:
+        doc = iam.get_role_policy(RoleName=tool_role_name, PolicyName=pol_name)["PolicyDocument"]
+        for stmt in doc.get("Statement", []):
+            actions = stmt.get("Action", [])
+            if isinstance(actions, str):
+                actions = [actions]
+            if any(a in actions for a in ("bedrock:Converse", "bedrock:InvokeModel", "bedrock:*", "*")):
+                tool_has_converse = True
+                res = stmt.get("Resource", [])
+                if isinstance(res, str):
+                    res = [res]
+                if any("inference-profile" in r or r == "*" for r in res):
+                    tool_has_inference_profile = True
+    # Also check managed policies
+    tool_attached = iam.list_attached_role_policies(RoleName=tool_role_name)["AttachedPolicies"]
+    for pol in tool_attached:
+        if "BedrockFullAccess" in pol["PolicyName"] or pol["PolicyName"] == "AdministratorAccess":
+            tool_has_converse = True
+            tool_has_inference_profile = True
+
+    if tool_has_converse:
+        log(PASS, f"Tool executor role has bedrock:Converse/InvokeModel")
+    else:
+        log(FAIL, f"Tool executor role MISSING bedrock:Converse — tools cannot call Bedrock models!")
+
+    if tool_has_inference_profile:
+        log(PASS, f"Tool executor role has inference-profile ARNs")
+    else:
+        log(FAIL, f"Tool executor role MISSING inference-profile ARNs! Model us.amazon.nova-lite-v1:0 is an inference profile, not a foundation-model. Add inference-profile/* to the IAM policy resources.")
+
+    # Direct invocation test of the tool executor
+    print(f"\n  Direct tool executor test (generate_soap with minimal input)...")
+    try:
+        tool_test_payload = {
+            "actionGroup": "ClinicalTools",
+            "function": "generate_soap",
+            "parameters": [
+                {"name": "consultation_text", "value": "Patient Ravi Kumar, 45M, headache 2 days. No fever. BP 130/80. Prescribed paracetamol 500mg TDS x3 days."},
+                {"name": "patient_name", "value": "Ravi Kumar"},
+                {"name": "patient_age", "value": "45"},
+                {"name": "patient_gender", "value": "Male"}
+            ]
+        }
+        tool_resp = lambda_client.invoke(
+            FunctionName=tool_lambda_name,
+            InvocationType="RequestResponse",
+            Payload=json.dumps(tool_test_payload)
+        )
+        tool_status = tool_resp.get("StatusCode", 0)
+        tool_func_error = tool_resp.get("FunctionError", "")
+        tool_payload = json.loads(tool_resp["Payload"].read().decode("utf-8"))
+
+        if tool_func_error:
+            log(FAIL, f"Tool executor returned function error: {tool_func_error}")
+            print(f"    Payload: {json.dumps(tool_payload, indent=2)[:500]}")
+        else:
+            tool_response = tool_payload.get("response", {})
+            func_resp = tool_response.get("functionResponse", {})
+            resp_state = func_resp.get("responseState", "")
+            resp_body = func_resp.get("responseBody", {}).get("TEXT", {}).get("body", "")
+
+            if resp_state == "FAILURE":
+                log(FAIL, f"Tool executor generate_soap FAILED: {resp_body[:300]}")
+            elif resp_body:
+                try:
+                    parsed = json.loads(resp_body)
+                    has_subjective = "subjective" in parsed
+                    has_objective = "objective" in parsed
+                    log(PASS, f"Tool executor generate_soap returned valid SOAP (subjective={has_subjective}, objective={has_objective})")
+                except json.JSONDecodeError:
+                    log(WARN, f"Tool executor returned non-JSON: {resp_body[:200]}")
+            else:
+                log(WARN, f"Tool executor returned empty body")
+    except Exception as e:
+        log(FAIL, f"Tool executor direct invocation failed: {e}")
 
 except Exception as e:
     log(FAIL, f"Tool executor Lambda not found: {e}")
