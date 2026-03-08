@@ -426,9 +426,79 @@ for model_id in test_models:
 
 
 # =====================================================
+# 8.5. CHECK CALLER'S OWN INVOKEAGENT PERMISSION
+# =====================================================
+section("8.5. CALLER INVOKEAGENT PERMISSION")
+
+# The caller (IAM user/role running this script) also needs bedrock:InvokeAgent
+print(f"  Caller: {CALLER_ARN}")
+print(f"  Checking if caller has bedrock:InvokeAgent permission...")
+
+# Try to simulate the policy
+try:
+    iam_resource = boto3.resource("iam", region_name=REGION)
+    # Extract user or role name from ARN
+    if ":user/" in CALLER_ARN:
+        caller_type = "user"
+        caller_name = CALLER_ARN.split(":user/")[-1]
+        # Check user policies
+        user = iam_resource.User(caller_name)
+        all_policies = []
+        # Inline policies
+        for pol in user.policies.all():
+            doc = pol.policy_document
+            all_policies.append(("inline:" + pol.name, doc))
+        # Attached policies
+        for pol in user.attached_policies.all():
+            # Get the default version
+            policy = iam_resource.Policy(pol.arn)
+            version = policy.default_version
+            all_policies.append(("attached:" + pol.policy_name, version.document))
+        # Check groups
+        for group in user.groups.all():
+            for pol in group.policies.all():
+                all_policies.append(("group-inline:" + pol.name, pol.policy_document))
+            for pol in group.attached_policies.all():
+                policy = iam_resource.Policy(pol.arn)
+                version = policy.default_version
+                all_policies.append(("group-attached:" + pol.policy_name, version.document))
+
+        caller_has_invoke_agent = False
+        for pol_name, doc in all_policies:
+            for stmt in doc.get("Statement", []):
+                if stmt.get("Effect") != "Allow":
+                    continue
+                actions = stmt.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                for action in actions:
+                    if action in ("bedrock:InvokeAgent", "bedrock:*", "*"):
+                        caller_has_invoke_agent = True
+                        print(f"    Found InvokeAgent in policy: {pol_name}")
+                        break
+
+        if caller_has_invoke_agent:
+            log(PASS, "Caller has bedrock:InvokeAgent permission")
+        else:
+            log(FAIL, f"Caller IAM user '{caller_name}' does NOT have bedrock:InvokeAgent permission!")
+            log(FAIL, "  This means the debug script cannot invoke agents directly.")
+            log(FAIL, "  Add bedrock:InvokeAgent to the user's policy, or use bedrock:* for full access.")
+            print(f"\n  All policies found for {caller_name}:")
+            for pol_name, doc in all_policies:
+                print(f"    {pol_name}:")
+                for stmt in doc.get("Statement", []):
+                    print(f"      Effect={stmt.get('Effect')} Actions={stmt.get('Action')}")
+    elif ":role/" in CALLER_ARN or ":assumed-role/" in CALLER_ARN:
+        print(f"  Caller is a role — skipping detailed user policy check")
+        log(WARN, "Cannot check role-based caller permissions in detail from here")
+except Exception as e:
+    log(WARN, f"Could not check caller permissions: {e}")
+
+
+# =====================================================
 # 9. INVOKE EACH COLLABORATOR AGENT DIRECTLY
 # =====================================================
-section("9. TEST INVOKE EACH COLLABORATOR AGENT")
+section("9. TEST INVOKE EACH COLLABORATOR AGENT (as current caller)")
 
 for name, agent in collaborators.items():
     agent_id = agent["agentId"]
@@ -556,6 +626,72 @@ Please coordinate with your specialist agents to generate all documentation."""
             log(FAIL, "     Check Tool Executor Lambda CloudWatch logs for details.")
 else:
     log(FAIL, "Cannot test Supervisor — no alias found")
+
+
+# =====================================================
+# 11. INVOKE VIA LAMBDA (tests Lambda's own role)
+# =====================================================
+section("11. TEST VIA LAMBDA INVOCATION (uses Lambda execution role)")
+
+try:
+    test_payload = {
+        "httpMethod": "POST",
+        "body": json.dumps({
+            "consultation_text": "Patient Ravi Kumar, 45 year old male, presents with headache for 2 days. No fever, no vomiting. BP 130/80. Prescribed paracetamol 500mg TDS for 3 days.",
+            "patient": {"name": "Ravi Kumar", "age": 45, "gender": "Male", "patient_id": "TEST-001"},
+            "doctor": {"name": "Dr. Sharma", "speciality": "General Medicine", "hospital": "City Hospital"}
+        })
+    }
+
+    print(f"  Invoking Lambda: {invoker_lambda_name}...")
+    print(f"  This tests the Lambda's own execution role (not the caller's permissions)")
+
+    resp = lambda_client.invoke(
+        FunctionName=invoker_lambda_name,
+        InvocationType="RequestResponse",
+        Payload=json.dumps(test_payload)
+    )
+
+    status_code = resp.get("StatusCode", 0)
+    func_error = resp.get("FunctionError", "")
+    payload = json.loads(resp["Payload"].read().decode("utf-8"))
+
+    print(f"  Lambda HTTP status: {status_code}")
+    if func_error:
+        print(f"  Lambda function error: {func_error}")
+        log(FAIL, f"Lambda invocation returned function error: {func_error}")
+        print(f"  Payload: {json.dumps(payload, indent=2)[:1000]}")
+    else:
+        body_status = payload.get("statusCode", 0)
+        print(f"  Response statusCode: {body_status}")
+
+        if body_status == 200:
+            body = json.loads(payload.get("body", "{}"))
+            has_soap = bool(body.get("soap_note"))
+            has_summary = bool(body.get("patient_summary"))
+            arch = body.get("metadata", {}).get("architecture", "")
+            print(f"  Architecture: {arch}")
+            print(f"  Has SOAP note: {has_soap}")
+            print(f"  Has patient summary: {has_summary}")
+
+            if "fallback" in arch.lower():
+                log(WARN, f"Lambda fell back to monolithic: {arch}")
+                fallback_reason = body.get("metadata", {}).get("fallback_reason", "unknown")
+                log(FAIL, f"Multi-agent path failed, fallback reason: {fallback_reason}")
+            else:
+                log(PASS, f"Lambda E2E test PASSED via multi-agent! Architecture: {arch}")
+        else:
+            body = payload.get("body", "{}")
+            if isinstance(body, str):
+                try:
+                    body = json.loads(body)
+                except Exception:
+                    pass
+            error_msg = body.get("error", str(body)[:300]) if isinstance(body, dict) else str(body)[:300]
+            log(FAIL, f"Lambda returned status {body_status}: {error_msg}")
+
+except Exception as e:
+    log(FAIL, f"Lambda invocation failed: {e}")
 
 
 # =====================================================

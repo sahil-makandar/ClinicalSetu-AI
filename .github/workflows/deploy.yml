@@ -282,6 +282,36 @@ jobs:
             echo "WARNING: Could not extract agent IDs. Check setup script output above."
           fi
 
+      # ----- Step 4.54: Grant deployer user InvokeAgent permission -----
+      - name: Grant deployer InvokeAgent permission
+        run: |
+          CALLER_ARN=$(aws sts get-caller-identity --query Arn --output text)
+          echo "Caller: $CALLER_ARN"
+          # Extract username from ARN
+          USERNAME=$(echo "$CALLER_ARN" | grep -oP '(?<=:user/).*' || true)
+          if [ -n "$USERNAME" ]; then
+            echo "Adding bedrock:InvokeAgent permission to IAM user: $USERNAME"
+            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            aws iam put-user-policy \
+              --user-name "$USERNAME" \
+              --policy-name BedrockAgentInvokeAccess \
+              --policy-document "{
+                \"Version\": \"2012-10-17\",
+                \"Statement\": [{
+                  \"Effect\": \"Allow\",
+                  \"Action\": [\"bedrock:InvokeAgent\", \"bedrock:GetAgent\", \"bedrock:GetAgentAlias\"],
+                  \"Resource\": [
+                    \"arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:agent/*\",
+                    \"arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:agent-alias/*\"
+                  ]
+                }]
+              }"
+            echo "Permission added. Waiting 10s for propagation..."
+            sleep 10
+          else
+            echo "Caller is not an IAM user, skipping."
+          fi
+
       # ----- Step 4.55: Fix agent role permissions (inference profiles) -----
       - name: Fix agent service role permissions
         run: |
