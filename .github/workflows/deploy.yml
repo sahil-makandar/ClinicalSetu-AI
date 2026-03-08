@@ -282,120 +282,6 @@ jobs:
             echo "WARNING: Could not extract agent IDs. Check setup script output above."
           fi
 
-      # ----- Step 4.54: Grant deployer user InvokeAgent permission -----
-      - name: Grant deployer InvokeAgent permission
-        run: |
-          CALLER_ARN=$(aws sts get-caller-identity --query Arn --output text)
-          echo "Caller: $CALLER_ARN"
-          # Extract username from ARN
-          USERNAME=$(echo "$CALLER_ARN" | grep -oP '(?<=:user/).*' || true)
-          if [ -n "$USERNAME" ]; then
-            echo "Adding bedrock:InvokeAgent permission to IAM user: $USERNAME"
-            ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            aws iam put-user-policy \
-              --user-name "$USERNAME" \
-              --policy-name BedrockAgentInvokeAccess \
-              --policy-document "{
-                \"Version\": \"2012-10-17\",
-                \"Statement\": [{
-                  \"Effect\": \"Allow\",
-                  \"Action\": [\"bedrock:InvokeAgent\", \"bedrock:GetAgent\", \"bedrock:GetAgentAlias\"],
-                  \"Resource\": [
-                    \"arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:agent/*\",
-                    \"arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:agent-alias/*\"
-                  ]
-                }]
-              }"
-            echo "Permission added. Waiting 10s for propagation..."
-            sleep 10
-          else
-            echo "Caller is not an IAM user, skipping."
-          fi
-
-      # ----- Step 4.55: Fix agent role permissions (inference profiles) -----
-      - name: Fix agent service role permissions
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          echo "Attaching AmazonBedrockFullAccess to agent role + custom KB policy..."
-
-          # Attach the AWS managed policy for full Bedrock access (covers all inference profile permissions)
-          aws iam attach-role-policy \
-            --role-name ClinicalSetu-MultiAgentRole \
-            --policy-arn arn:aws:iam::aws:policy/AmazonBedrockFullAccess 2>/dev/null || echo "Already attached"
-
-          # Keep custom policy only for KB access
-          cat > /tmp/agent_model_policy.json << POLICYEOF
-          {
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Effect": "Allow",
-                "Action": ["bedrock:Retrieve", "bedrock:RetrieveAndGenerate"],
-                "Resource": "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:knowledge-base/*"
-              },
-              {
-                "Effect": "Allow",
-                "Action": ["lambda:InvokeFunction"],
-                "Resource": "arn:aws:lambda:us-east-1:${ACCOUNT_ID}:function:clinicalsetu-*"
-              }
-            ]
-          }
-          POLICYEOF
-          sed -i "s/\${ACCOUNT_ID}/$ACCOUNT_ID/g" /tmp/agent_model_policy.json
-          aws iam put-role-policy \
-            --role-name ClinicalSetu-MultiAgentRole \
-            --policy-name ClinicalSetuMultiAgentPolicy \
-            --policy-document file:///tmp/agent_model_policy.json
-          echo "Policies updated. Waiting 20s for IAM propagation..."
-          sleep 20
-
-          # Re-prepare all agents AND update their aliases
-          echo "Re-preparing all agents and updating aliases..."
-          for AGENT_NAME in ClinicalSetu-SOAPAgent ClinicalSetu-SummaryAgent ClinicalSetu-ReferralAgent ClinicalSetu-TrialAgent ClinicalSetu-Supervisor; do
-            AGENT_ID=$(aws bedrock-agent list-agents --query "agentSummaries[?agentName=='${AGENT_NAME}'].agentId" --output text 2>/dev/null)
-            if [ -n "$AGENT_ID" ]; then
-              echo "  Preparing $AGENT_NAME ($AGENT_ID)..."
-              aws bedrock-agent prepare-agent --agent-id "$AGENT_ID" --no-cli-pager
-            fi
-          done
-
-          echo "Waiting 40s for all agents to finish preparing..."
-          sleep 40
-
-          # Now update all prod aliases to point to latest version
-          echo "Updating all prod aliases to latest version..."
-          for AGENT_NAME in ClinicalSetu-SOAPAgent ClinicalSetu-SummaryAgent ClinicalSetu-ReferralAgent ClinicalSetu-TrialAgent ClinicalSetu-Supervisor; do
-            AGENT_ID=$(aws bedrock-agent list-agents --query "agentSummaries[?agentName=='${AGENT_NAME}'].agentId" --output text 2>/dev/null)
-            if [ -n "$AGENT_ID" ]; then
-              # Get prod alias ID
-              ALIAS_ID=$(aws bedrock-agent list-agent-aliases --agent-id "$AGENT_ID" \
-                --query "agentAliasSummaries[?agentAliasName=='prod'].agentAliasId" --output text 2>/dev/null)
-              if [ -n "$ALIAS_ID" ] && [ "$ALIAS_ID" != "None" ]; then
-                echo "  Updating alias for $AGENT_NAME: alias=$ALIAS_ID"
-                aws bedrock-agent update-agent-alias \
-                  --agent-id "$AGENT_ID" \
-                  --agent-alias-id "$ALIAS_ID" \
-                  --agent-alias-name "prod" \
-                  --no-cli-pager 2>&1 || echo "    Warning: alias update issue"
-              else
-                echo "  No prod alias found for $AGENT_NAME"
-              fi
-            fi
-          done
-
-          echo "Waiting 30s for aliases to stabilize..."
-          sleep 30
-
-      # ----- Step 4.56: Debug Multi-Agent Permissions & Connectivity -----
-      - name: Debug Bedrock Multi-Agent Setup
-        run: |
-          echo "Running multi-agent diagnostics..."
-          python scripts/debug_agents.py 2>&1 | tee /tmp/agent_debug.log
-          echo "## Agent Debug Results" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat /tmp/agent_debug.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
       # ----- Step 4.6: Setup Bedrock Knowledge Base for RAG (one-time) -----
       - name: Setup Bedrock Knowledge Base for RAG
         if: vars.KNOWLEDGE_BASE_SETUP_DONE != 'true'
@@ -518,17 +404,12 @@ jobs:
         run: |
           echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Resource | URL |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-----|" >> $GITHUB_STEP_SUMMARY
-          echo "| Frontend | ${{ steps.stack.outputs.cloudfront_url }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| API (multi-agent) | ${{ steps.stack.outputs.api_url }}/api/process-agent |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "### AWS Services Deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- Lambda x4 (Python 3.12) - Monolithic + Agent Invoker + Tool Executor + Trial Fetcher" >> $GITHUB_STEP_SUMMARY
+          echo "- Lambda x5 (Python 3.12) - API + Agent Invoker + Tool Executor + Trial Fetcher + Visit API" >> $GITHUB_STEP_SUMMARY
           echo "- API Gateway (REST) - HTTPS endpoint" >> $GITHUB_STEP_SUMMARY
           echo "- S3 - Frontend hosting + Lambda code + Clinical trial data" >> $GITHUB_STEP_SUMMARY
           echo "- CloudFront - CDN with HTTPS" >> $GITHUB_STEP_SUMMARY
-          echo "- DynamoDB - Response caching" >> $GITHUB_STEP_SUMMARY
+          echo "- DynamoDB - Response caching + Visit history" >> $GITHUB_STEP_SUMMARY
           echo "- Amazon Bedrock - Nova Lite (primary) + Nova Micro (fallback)" >> $GITHUB_STEP_SUMMARY
           echo "- Bedrock Multi-Agent Collaboration - Supervisor + 4 Specialists" >> $GITHUB_STEP_SUMMARY
           echo "- Bedrock Knowledge Base - RAG for clinical trial matching (Titan Embeddings v2 + OpenSearch Serverless)" >> $GITHUB_STEP_SUMMARY
