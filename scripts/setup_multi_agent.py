@@ -167,7 +167,48 @@ def create_agent_with_tools(agent_name, instruction, description, tool_lambda_ar
     existing_id = find_existing_agent(agent_name)
     if existing_id:
         print(f"  Agent {agent_name} already exists: {existing_id}")
-        return existing_id
+        agent_id = existing_id
+        
+        # Check if action group exists
+        try:
+            action_groups = bedrock_agent.list_agent_action_groups(
+                agentId=agent_id,
+                agentVersion="DRAFT"
+            )
+            has_action_group = len(action_groups.get("actionGroupSummaries", [])) > 0
+            
+            if not has_action_group:
+                print(f"  Adding missing action group...")
+                bedrock_agent.create_agent_action_group(
+                    agentId=agent_id,
+                    agentVersion="DRAFT",
+                    actionGroupName=f"{agent_name}-Tools",
+                    description=f"Tools for {agent_name}",
+                    actionGroupExecutor={"lambda": tool_lambda_arn},
+                    functionSchema={"functions": functions},
+                    actionGroupState="ENABLED"
+                )
+                print(f"  Added action group with {len(functions)} tool(s)")
+                
+                # Grant Bedrock permission to invoke Lambda
+                try:
+                    lambda_client.add_permission(
+                        FunctionName=TOOL_LAMBDA_NAME,
+                        StatementId=f"AllowBedrock-{agent_name}",
+                        Action="lambda:InvokeFunction",
+                        Principal="bedrock.amazonaws.com",
+                        SourceAccount=ACCOUNT_ID,
+                        SourceArn=f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:agent/{agent_id}"
+                    )
+                except Exception as e:
+                    if "Conflict" in str(e) or "ResourceConflictException" in str(type(e)):
+                        pass
+            else:
+                print(f"  Action group already exists")
+        except Exception as e:
+            print(f"  Warning checking action groups: {e}")
+        
+        return agent_id
 
     response = bedrock_agent.create_agent(
         agentName=agent_name,
