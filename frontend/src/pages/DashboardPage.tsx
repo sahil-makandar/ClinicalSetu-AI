@@ -1,19 +1,59 @@
 import { useNavigate } from 'react-router-dom';
-import { Plus, FileText, LogOut, Activity, Users, Clock, Stethoscope, ChevronRight, Search, Sparkles } from 'lucide-react';
-import { sampleConsultations } from '../data/sampleConsultations';
-import type { Consultation } from '../types';
+import { useState, useEffect } from 'react';
+import { Plus, FileText, LogOut, Activity, Clock, Stethoscope, ChevronRight, Search, Sparkles, Loader2, AlertCircle, Calendar } from 'lucide-react';
+import { fetchDoctorVisits } from '../services/api';
+import type { Visit } from '../types';
 
 interface Props {
   doctor: { id: string; name: string; speciality: string; hospital: string };
   onLogout: () => void;
-  onSelectConsultation: (c: Consultation) => void;
+  onSelectVisit: (visit: Visit) => void;
 }
 
-export default function DashboardPage({ doctor, onLogout, onSelectConsultation }: Props) {
+export default function DashboardPage({ doctor, onLogout, onSelectVisit }: Props) {
   const navigate = useNavigate();
-  const doctorConsultations = sampleConsultations.filter(
-    c => c.doctor.name === doctor.name
-  );
+  const [visits, setVisits] = useState<Visit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    setError('');
+    fetchDoctorVisits(doctor.name)
+      .then((data) => setVisits(data))
+      .catch((err) => setError(err.message || 'Failed to load consultations'))
+      .finally(() => setLoading(false));
+  }, [doctor.name]);
+
+  const filteredVisits = visits.filter((v) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      v.patient_name?.toLowerCase().includes(q) ||
+      v.diagnosis?.toLowerCase().includes(q) ||
+      v.consultation_id?.toLowerCase().includes(q) ||
+      v.hospital?.toLowerCase().includes(q)
+    );
+  });
+
+  const formatDate = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const formatTime = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -58,10 +98,7 @@ export default function DashboardPage({ doctor, onLogout, onSelectConsultation }
             <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">{doctor.name}</h2>
             <p className="text-teal-100/60 text-sm max-w-lg">{doctor.speciality} &middot; {doctor.hospital}</p>
             <button
-              onClick={() => {
-                onSelectConsultation(null as unknown as Consultation);
-                navigate('/consultation');
-              }}
+              onClick={() => navigate('/consultation')}
               className="mt-5 inline-flex items-center gap-2 bg-white text-medical-700 px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-medical-50 transition-all duration-200 shadow-lg cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -79,8 +116,8 @@ export default function DashboardPage({ doctor, onLogout, onSelectConsultation }
                 <FileText className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-3xl font-bold text-slate-900">{doctorConsultations.length}</p>
-                <p className="text-xs text-slate-500 font-medium">Sample Cases</p>
+                <p className="text-3xl font-bold text-slate-900">{loading ? '-' : visits.length}</p>
+                <p className="text-xs text-slate-500 font-medium">Consultations</p>
               </div>
             </div>
           </div>
@@ -91,7 +128,7 @@ export default function DashboardPage({ doctor, onLogout, onSelectConsultation }
                 <Sparkles className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-3xl font-bold text-slate-900">4</p>
+                <p className="text-3xl font-bold text-slate-900">5</p>
                 <p className="text-xs text-slate-500 font-medium">AI Outputs / Visit</p>
               </div>
             </div>
@@ -103,66 +140,114 @@ export default function DashboardPage({ doctor, onLogout, onSelectConsultation }
                 <Activity className="w-5 h-5" />
               </div>
               <div>
-                <p className="text-3xl font-bold text-slate-900">0</p>
-                <p className="text-xs text-slate-500 font-medium">Pending Reviews</p>
+                <p className="text-3xl font-bold text-slate-900">{loading ? '-' : new Set(visits.map(v => v.patient_name)).size}</p>
+                <p className="text-xs text-slate-500 font-medium">Unique Patients</p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Section Header */}
-        <div className="flex items-center justify-between mb-5">
+        {/* Section Header + Search */}
+        <div className="flex items-center justify-between mb-5 gap-4">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900 tracking-tight">Sample Consultations</h3>
-            <p className="text-sm text-slate-500 mt-0.5">Select a case to process with AI</p>
+            <h3 className="text-lg font-semibold text-slate-900 tracking-tight">Consultations</h3>
+            <p className="text-sm text-slate-500 mt-0.5">Your patient visit records</p>
           </div>
-          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-400 bg-white border border-slate-200/60 rounded-xl px-3 py-2">
-            <Search className="w-3.5 h-3.5" />
-            <span>{sampleConsultations.length} cases available</span>
+          <div className="relative flex-1 max-w-sm">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by patient, diagnosis..."
+              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200/60 rounded-xl text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-medical-500/20 focus:border-medical-500 transition-all"
+            />
           </div>
         </div>
 
-        {/* Consultation Cards */}
-        <div className="space-y-3">
-          {sampleConsultations.map((consultation) => (
+        {/* Loading */}
+        {loading && (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-6 h-6 text-medical-500 animate-spin mr-3" />
+            <span className="text-sm text-slate-500">Loading consultations...</span>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && !loading && (
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-5 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-rose-800">Unable to load consultations</p>
+              <p className="text-xs text-rose-600 mt-1">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!loading && !error && visits.length === 0 && (
+          <div className="text-center py-20">
+            <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+            <p className="text-sm text-slate-500 font-medium">No consultations yet</p>
+            <p className="text-xs text-slate-400 mt-1">Start a new consultation to see records here</p>
             <button
-              key={consultation.id}
+              onClick={() => navigate('/consultation')}
+              className="mt-4 inline-flex items-center gap-2 bg-medical-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-medical-700 transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              New Consultation
+            </button>
+          </div>
+        )}
+
+        {/* No search results */}
+        {!loading && !error && visits.length > 0 && filteredVisits.length === 0 && (
+          <div className="text-center py-16">
+            <Search className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <p className="text-sm text-slate-500">No consultations match "{searchQuery}"</p>
+          </div>
+        )}
+
+        {/* Visit Cards */}
+        <div className="space-y-3">
+          {filteredVisits.map((visit) => (
+            <button
+              key={visit.consultation_id + visit.visit_date}
               onClick={() => {
-                onSelectConsultation(consultation);
-                navigate('/consultation');
+                onSelectVisit(visit);
+                navigate('/visit-detail');
               }}
               className="w-full group bg-white rounded-2xl p-5 border border-slate-200/60 shadow-sm hover:border-medical-300 hover:shadow-md hover:shadow-medical-500/5 transition-all duration-300 text-left cursor-pointer"
             >
               <div className="flex items-start gap-4">
                 {/* Avatar */}
                 <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-medical-100 to-medical-200 text-medical-700 flex items-center justify-center font-bold text-sm shrink-0">
-                  {consultation.patient.name.split(' ').map(n => n[0]).slice(0, 2).join('')}
+                  {visit.patient_name?.split(' ').map(n => n[0]).slice(0, 2).join('') || '?'}
                 </div>
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                    <h3 className="font-semibold text-slate-900 text-sm">{consultation.patient.name}</h3>
+                    <h3 className="font-semibold text-slate-900 text-sm">{visit.patient_name}</h3>
                     <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-lg font-medium">
-                      {consultation.patient.age}y &middot; {consultation.patient.gender}
+                      {visit.patient_age}y &middot; {visit.patient_gender}
                     </span>
-                    {consultation.referral_reason && (
-                      <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200/60 px-2 py-0.5 rounded-lg font-medium">
-                        Referral Needed
-                      </span>
-                    )}
                   </div>
-                  <p className="text-sm text-slate-500 line-clamp-2 leading-relaxed">
-                    {consultation.consultation_text.slice(0, 160)}...
+                  <p className="text-sm text-slate-600 font-medium mb-1">
+                    {visit.diagnosis}
                   </p>
-                  <div className="flex items-center gap-3 mt-2.5">
+                  <div className="flex items-center gap-3 mt-2">
                     <span className="flex items-center gap-1 text-xs text-slate-400">
-                      <Users className="w-3 h-3" />
-                      {consultation.doctor.name}
+                      <Calendar className="w-3 h-3" />
+                      {formatDate(visit.visit_date)}
                     </span>
                     <span className="text-slate-300">&middot;</span>
                     <span className="flex items-center gap-1 text-xs text-slate-400">
                       <Clock className="w-3 h-3" />
-                      {consultation.id}
+                      {formatTime(visit.visit_date)}
+                    </span>
+                    <span className="text-slate-300">&middot;</span>
+                    <span className="text-xs text-slate-400">
+                      {visit.consultation_id}
                     </span>
                   </div>
                 </div>

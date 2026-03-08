@@ -53,6 +53,14 @@ export async function saveVisit(data: {
   return result;
 }
 
+export async function fetchDoctorVisits(doctorName: string): Promise<Visit[]> {
+  const response = await api.post('/api/doctor-visits', { doctor_name: doctorName });
+  const result = typeof response.data.body === 'string'
+    ? JSON.parse(response.data.body)
+    : response.data;
+  return result;
+}
+
 export async function fetchPatientVisits(phoneNumber: string): Promise<Visit[]> {
   const response = await api.post('/api/patient-visits', { phone_number: phoneNumber });
   const result = typeof response.data.body === 'string'

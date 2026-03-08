@@ -171,6 +171,22 @@ jobs:
             echo "WARNING: Could not extract KB ID. Check setup script output above."
           fi
 
+      # ----- Step 4.7: Seed synthetic visit data (idempotent) -----
+      - name: Seed synthetic visit data
+        if: vars.SEED_DATA_DONE != 'true'
+        run: |
+          VISITS_TABLE=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='VisitsTableName'].OutputValue" \
+            --output text 2>/dev/null || echo "clinicalsetu-visits-prod")
+          # Fallback if output not found
+          if [ "$VISITS_TABLE" = "None" ] || [ -z "$VISITS_TABLE" ]; then
+            VISITS_TABLE="${{ env.PROJECT_NAME }}-visits-${{ env.STAGE }}"
+          fi
+          echo "Seeding visits table: $VISITS_TABLE"
+          VISITS_TABLE="$VISITS_TABLE" AWS_REGION="${{ env.AWS_REGION }}" python scripts/seed_visits.py
+          echo "Set SEED_DATA_DONE=true in repo variables to skip next time."
+
       # ----- Step 5: Get Stack Outputs -----
       - name: Get stack outputs
         id: stack

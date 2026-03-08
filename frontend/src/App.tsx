@@ -5,7 +5,8 @@ import DashboardPage from './pages/DashboardPage';
 import ConsultationPage from './pages/ConsultationPage';
 import ResultsPage from './pages/ResultsPage';
 import PatientPortalPage from './pages/PatientPortalPage';
-import type { ProcessingResult, Consultation } from './types';
+import VisitDetailPage from './pages/VisitDetailPage';
+import type { ProcessingResult, Consultation, Visit } from './types';
 
 type UserMode = 'none' | 'doctor' | 'patient';
 
@@ -14,6 +15,7 @@ function App() {
   const [doctor, setDoctor] = useState<{ id: string; name: string; speciality: string; hospital: string } | null>(null);
   const [currentResult, setCurrentResult] = useState<ProcessingResult | null>(null);
   const [currentConsultation, setCurrentConsultation] = useState<Consultation | null>(null);
+  const [currentVisit, setCurrentVisit] = useState<Visit | null>(null);
   const [patientPhone, setPatientPhone] = useState('');
 
   const handleDoctorLogin = (doc: { id: string; name: string; speciality: string; hospital: string }) => {
@@ -31,6 +33,7 @@ function App() {
     setUserMode('none');
     setCurrentResult(null);
     setCurrentConsultation(null);
+    setCurrentVisit(null);
     setPatientPhone('');
   };
 
@@ -51,8 +54,22 @@ function App() {
             <DashboardPage
               doctor={doctor!}
               onLogout={handleLogout}
-              onSelectConsultation={(c) => setCurrentConsultation(c)}
+              onSelectVisit={(v) => setCurrentVisit(v)}
             />
+          }
+        />
+        <Route
+          path="/visit-detail"
+          element={
+            currentVisit ? (
+              <VisitDetailPage
+                visit={currentVisit}
+                doctor={doctor!}
+                onEditConsultation={(c) => setCurrentConsultation(c)}
+              />
+            ) : (
+              <Navigate to="/" />
+            )
           }
         />
         <Route

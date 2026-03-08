@@ -86,7 +86,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-lambda-role-${Stage}'
+      RoleName: !Sub '${ProjectName}-lambda-role-${Stage}-${AWS::AccountId}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -179,6 +179,8 @@ Resources:
           AttributeType: S
         - AttributeName: visit_date
           AttributeType: S
+        - AttributeName: doctor_name
+          AttributeType: S
       KeySchema:
         - AttributeName: pk
           KeyType: HASH
@@ -188,6 +190,14 @@ Resources:
         - IndexName: phone-index
           KeySchema:
             - AttributeName: phone_number
+              KeyType: HASH
+            - AttributeName: visit_date
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: doctor-index
+          KeySchema:
+            - AttributeName: doctor_name
               KeyType: HASH
             - AttributeName: visit_date
               KeyType: RANGE
@@ -283,7 +293,7 @@ Resources:
   AgentInvokerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-agent-invoker-role-${Stage}'
+      RoleName: !Sub '${ProjectName}-agent-invoker-role-${Stage}-${AWS::AccountId}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -358,7 +368,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: HasTrialsBucket
     Properties:
-      RoleName: !Sub '${ProjectName}-trial-fetcher-role-${Stage}'
+      RoleName: !Sub '${ProjectName}-trial-fetcher-role-${Stage}-${AWS::AccountId}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -652,6 +662,54 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  # /api/doctor-visits resource
+  ApiResourceDoctorVisits:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref ApiResourceApi
+      PathPart: doctor-visits
+
+  # POST /api/doctor-visits
+  ApiMethodDoctorVisits:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceDoctorVisits
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${VisitApiFunction.Arn}/invocations'
+
+  # OPTIONS /api/doctor-visits
+  ApiMethodDoctorVisitsOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceDoctorVisits
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   # Lambda permission for API Gateway to invoke Visit API
   VisitApiGatewayPermission:
     Type: AWS::Lambda::Permission
@@ -671,7 +729,7 @@ Resources:
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*'
 
   # Deploy the API
-  ApiDeploymentV3:
+  ApiDeploymentV4:
     Type: AWS::ApiGateway::Deployment
     DependsOn:
       - ApiMethodProcessAgent
@@ -682,6 +740,8 @@ Resources:
       - ApiMethodSaveVisitOptions
       - ApiMethodPatientVisits
       - ApiMethodPatientVisitsOptions
+      - ApiMethodDoctorVisits
+      - ApiMethodDoctorVisitsOptions
     Properties:
       RestApiId: !Ref ApiGateway
 
@@ -689,7 +749,7 @@ Resources:
     Type: AWS::ApiGateway::Stage
     Properties:
       RestApiId: !Ref ApiGateway
-      DeploymentId: !Ref ApiDeploymentV3
+      DeploymentId: !Ref ApiDeploymentV4
       StageName: !Ref Stage
       Description: !Sub '${ProjectName} ${Stage} stage'
 
@@ -773,7 +833,7 @@ Resources:
   TranscribeUnauthRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub '${ProjectName}-transcribe-unauth-${Stage}'
+      RoleName: !Sub '${ProjectName}-transcribe-unauth-${Stage}-${AWS::AccountId}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -847,6 +907,10 @@ Outputs:
   CacheTableArn:
     Description: DynamoDB cache table ARN
     Value: !GetAtt CacheTable.Arn
+
+  VisitsTableName:
+    Description: DynamoDB visits table name
+    Value: !Ref VisitsTable
 
   CognitoIdentityPoolId:
     Description: Cognito Identity Pool ID for Transcribe Medical access

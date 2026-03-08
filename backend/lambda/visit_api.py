@@ -28,6 +28,8 @@ def lambda_handler(event, context):
         return _save_visit(body)
     elif path.endswith("/patient-visits"):
         return _get_visits(body)
+    elif path.endswith("/doctor-visits"):
+        return _get_doctor_visits(body)
     else:
         return _cors(404, json.dumps({"error": "Not found"}))
 
@@ -88,6 +90,25 @@ def _get_visits(body):
 
     items = resp.get("Items", [])
     # Convert Decimal to float/int for JSON serialization
+    return _cors(200, json.dumps(items, default=_decimal_default))
+
+
+def _get_doctor_visits(body):
+    table = dynamodb.Table(VISITS_TABLE)
+    doctor_name = body.get("doctor_name", "")
+
+    if not doctor_name:
+        return _cors(400, json.dumps({"error": "doctor_name is required"}))
+
+    resp = table.query(
+        IndexName="doctor-index",
+        KeyConditionExpression="doctor_name = :dn",
+        ExpressionAttributeValues={":dn": doctor_name},
+        ScanIndexForward=False,
+        Limit=50,
+    )
+
+    items = resp.get("Items", [])
     return _cors(200, json.dumps(items, default=_decimal_default))
 
 
