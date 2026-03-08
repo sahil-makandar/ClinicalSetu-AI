@@ -316,42 +316,37 @@ jobs:
       - name: Fix agent service role permissions
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          echo "Updating ClinicalSetu-MultiAgentRole with FULL Bedrock permissions..."
+          echo "Attaching AmazonBedrockFullAccess to agent role + custom KB policy..."
+
+          # Attach the AWS managed policy for full Bedrock access (covers all inference profile permissions)
+          aws iam attach-role-policy \
+            --role-name ClinicalSetu-MultiAgentRole \
+            --policy-arn arn:aws:iam::aws:policy/AmazonBedrockFullAccess 2>/dev/null || echo "Already attached"
+
+          # Keep custom policy only for KB access
           cat > /tmp/agent_model_policy.json << POLICYEOF
           {
             "Version": "2012-10-17",
             "Statement": [
               {
                 "Effect": "Allow",
-                "Action": [
-                  "bedrock:InvokeModel",
-                  "bedrock:InvokeModelWithResponseStream",
-                  "bedrock:Converse",
-                  "bedrock:ConverseStream",
-                  "bedrock:GetInferenceProfile",
-                  "bedrock:ListInferenceProfiles"
-                ],
-                "Resource": [
-                  "arn:aws:bedrock:us-east-1::foundation-model/*",
-                  "arn:aws:bedrock:*:*:inference-profile/*"
-                ]
+                "Action": ["bedrock:Retrieve", "bedrock:RetrieveAndGenerate"],
+                "Resource": "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:knowledge-base/*"
               },
               {
                 "Effect": "Allow",
-                "Action": ["bedrock:Retrieve", "bedrock:RetrieveAndGenerate"],
-                "Resource": "arn:aws:bedrock:us-east-1:${ACCOUNT_ID}:knowledge-base/*"
+                "Action": ["lambda:InvokeFunction"],
+                "Resource": "arn:aws:lambda:us-east-1:${ACCOUNT_ID}:function:clinicalsetu-*"
               }
             ]
           }
           POLICYEOF
           sed -i "s/\${ACCOUNT_ID}/$ACCOUNT_ID/g" /tmp/agent_model_policy.json
-          echo "Policy contents:"
-          cat /tmp/agent_model_policy.json
           aws iam put-role-policy \
             --role-name ClinicalSetu-MultiAgentRole \
             --policy-name ClinicalSetuMultiAgentPolicy \
             --policy-document file:///tmp/agent_model_policy.json
-          echo "Policy updated. Waiting 20s for IAM propagation..."
+          echo "Policies updated. Waiting 20s for IAM propagation..."
           sleep 20
 
           # Re-prepare all agents AND update their aliases

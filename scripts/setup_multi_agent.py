@@ -84,29 +84,29 @@ def get_or_create_agent_role():
         role_arn = f"arn:aws:iam::{ACCOUNT_ID}:role/{role_name}"
         print(f"  Role exists: {role_name}")
 
-    # Permissions for invoking foundation models, inference profiles, and Converse API
+    # Attach AmazonBedrockFullAccess managed policy (covers all model + inference profile permissions)
+    try:
+        iam.attach_role_policy(
+            RoleName=role_name,
+            PolicyArn="arn:aws:iam::aws:policy/AmazonBedrockFullAccess"
+        )
+        print(f"  Attached AmazonBedrockFullAccess managed policy")
+    except Exception as e:
+        print(f"  AmazonBedrockFullAccess: {e}")
+
+    # Custom policy for KB access and Lambda invocation
     permission_policy = {
         "Version": "2012-10-17",
         "Statement": [
             {
                 "Effect": "Allow",
-                "Action": [
-                    "bedrock:InvokeModel",
-                    "bedrock:InvokeModelWithResponseStream",
-                    "bedrock:Converse",
-                    "bedrock:ConverseStream",
-                    "bedrock:GetInferenceProfile",
-                    "bedrock:ListInferenceProfiles"
-                ],
-                "Resource": [
-                    f"arn:aws:bedrock:{REGION}::foundation-model/*",
-                    f"arn:aws:bedrock:*:*:inference-profile/*",
-                ]
+                "Action": ["bedrock:Retrieve", "bedrock:RetrieveAndGenerate"],
+                "Resource": f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:knowledge-base/*"
             },
             {
                 "Effect": "Allow",
-                "Action": ["bedrock:Retrieve", "bedrock:RetrieveAndGenerate"],
-                "Resource": f"arn:aws:bedrock:{REGION}:{ACCOUNT_ID}:knowledge-base/*"
+                "Action": ["lambda:InvokeFunction"],
+                "Resource": f"arn:aws:lambda:{REGION}:{ACCOUNT_ID}:function:clinicalsetu-*"
             }
         ]
     }
